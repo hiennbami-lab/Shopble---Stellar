@@ -1,0 +1,307 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "Stablecoin checkout \u0026 order reconciliation prototype trên Stellar TESTNET.\nToàn bộ scope là testnet — không có giá trị thật nào được chuyển.",
+        "title": "Shopble API",
+        "contact": {},
+        "license": {
+            "name": "Apache 2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.html"
+        },
+        "version": "1.0"
+    },
+    "host": "localhost:8080",
+    "basePath": "/api/v1",
+    "paths": {
+        "/orders": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "orders"
+                ],
+                "summary": "Liệt kê order intent của một ví buyer",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Địa chỉ ví buyer",
+                        "name": "buyer_wallet",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Mặc định 50, tối đa 200",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/v1.OrderListEnvelope"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/v1.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "orders"
+                ],
+                "summary": "Tạo order intent và sinh payment instruction testnet",
+                "parameters": [
+                    {
+                        "description": "Order intent",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/v1.CreateOrderRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/v1.CreateOrderEnvelope"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/v1.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/orders/{id}": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "orders"
+                ],
+                "summary": "Đọc một order intent kèm trạng thái hiện tại",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Order id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/v1.OrderEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/v1.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "libstellar.PaymentInstruction": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "string"
+                },
+                "asset_code": {
+                    "type": "string"
+                },
+                "asset_issuer": {
+                    "type": "string"
+                },
+                "destination": {
+                    "type": "string"
+                },
+                "memo": {
+                    "type": "string"
+                },
+                "memo_type": {
+                    "type": "string",
+                    "example": "MEMO_TEXT"
+                },
+                "network": {
+                    "type": "string"
+                },
+                "uri": {
+                    "description": "Uri — payload SEP-0007, dán thẳng vào ví hoặc render thành QR.",
+                    "type": "string"
+                }
+            }
+        },
+        "v1.CreateOrderData": {
+            "type": "object",
+            "properties": {
+                "instruction": {
+                    "$ref": "#/definitions/libstellar.PaymentInstruction"
+                },
+                "order": {
+                    "$ref": "#/definitions/v1.OrderDto"
+                }
+            }
+        },
+        "v1.CreateOrderEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/v1.CreateOrderData"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "ok"
+                }
+            }
+        },
+        "v1.CreateOrderRequest": {
+            "type": "object",
+            "required": [
+                "buyer_wallet",
+                "expected_amount",
+                "product_ref"
+            ],
+            "properties": {
+                "buyer_wallet": {
+                    "description": "BuyerWallet — địa chỉ ví Stellar đã connect (G..., 56 ký tự).",
+                    "type": "string",
+                    "example": "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
+                },
+                "expected_amount": {
+                    "description": "ExpectedAmount — số tiền kỳ vọng, dạng chuỗi thập phân, tối đa 7 chữ số lẻ.",
+                    "type": "string",
+                    "example": "25.5"
+                },
+                "product_ref": {
+                    "description": "ProductRef — product/source context của order.",
+                    "type": "string",
+                    "maxLength": 255,
+                    "example": "sku-1024"
+                }
+            }
+        },
+        "v1.ErrorData": {
+            "type": "object",
+            "properties": {
+                "error_code": {
+                    "type": "string",
+                    "example": "DATA_INVALID"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "v1.ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/v1.ErrorData"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "error"
+                }
+            }
+        },
+        "v1.OrderDto": {
+            "type": "object",
+            "properties": {
+                "asset_code": {
+                    "type": "string"
+                },
+                "asset_issuer": {
+                    "type": "string"
+                },
+                "buyer_wallet": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "integer"
+                },
+                "destination_account": {
+                    "type": "string"
+                },
+                "expected_amount": {
+                    "type": "string",
+                    "example": "25.5000000"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "memo": {
+                    "type": "string"
+                },
+                "on_chain_tx_hash": {
+                    "type": "string"
+                },
+                "product_ref": {
+                    "type": "string"
+                },
+                "reject_reason": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "awaiting_payment"
+                },
+                "updated_at": {
+                    "type": "integer"
+                }
+            }
+        },
+        "v1.OrderEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/v1.OrderDto"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "ok"
+                }
+            }
+        },
+        "v1.OrderListEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/v1.OrderDto"
+                    }
+                },
+                "status": {
+                    "type": "string",
+                    "example": "ok"
+                }
+            }
+        }
+    }
+}

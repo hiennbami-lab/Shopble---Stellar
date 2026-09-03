@@ -1,0 +1,209 @@
+basePath: /api/v1
+definitions:
+  libstellar.PaymentInstruction:
+    properties:
+      amount:
+        type: string
+      asset_code:
+        type: string
+      asset_issuer:
+        type: string
+      destination:
+        type: string
+      memo:
+        type: string
+      memo_type:
+        example: MEMO_TEXT
+        type: string
+      network:
+        type: string
+      uri:
+        description: Uri — payload SEP-0007, dán thẳng vào ví hoặc render thành QR.
+        type: string
+    type: object
+  v1.CreateOrderData:
+    properties:
+      instruction:
+        $ref: '#/definitions/libstellar.PaymentInstruction'
+      order:
+        $ref: '#/definitions/v1.OrderDto'
+    type: object
+  v1.CreateOrderEnvelope:
+    properties:
+      data:
+        $ref: '#/definitions/v1.CreateOrderData'
+      status:
+        example: ok
+        type: string
+    type: object
+  v1.CreateOrderRequest:
+    properties:
+      buyer_wallet:
+        description: BuyerWallet — địa chỉ ví Stellar đã connect (G..., 56 ký tự).
+        example: GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ
+        type: string
+      expected_amount:
+        description: ExpectedAmount — số tiền kỳ vọng, dạng chuỗi thập phân, tối đa
+          7 chữ số lẻ.
+        example: "25.5"
+        type: string
+      product_ref:
+        description: ProductRef — product/source context của order.
+        example: sku-1024
+        maxLength: 255
+        type: string
+    required:
+    - buyer_wallet
+    - expected_amount
+    - product_ref
+    type: object
+  v1.ErrorData:
+    properties:
+      error_code:
+        example: DATA_INVALID
+        type: string
+      message:
+        type: string
+    type: object
+  v1.ErrorResponse:
+    properties:
+      data:
+        $ref: '#/definitions/v1.ErrorData'
+      status:
+        example: error
+        type: string
+    type: object
+  v1.OrderDto:
+    properties:
+      asset_code:
+        type: string
+      asset_issuer:
+        type: string
+      buyer_wallet:
+        type: string
+      created_at:
+        type: integer
+      destination_account:
+        type: string
+      expected_amount:
+        example: "25.5000000"
+        type: string
+      id:
+        type: string
+      memo:
+        type: string
+      on_chain_tx_hash:
+        type: string
+      product_ref:
+        type: string
+      reject_reason:
+        type: string
+      status:
+        example: awaiting_payment
+        type: string
+      updated_at:
+        type: integer
+    type: object
+  v1.OrderEnvelope:
+    properties:
+      data:
+        $ref: '#/definitions/v1.OrderDto'
+      status:
+        example: ok
+        type: string
+    type: object
+  v1.OrderListEnvelope:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/v1.OrderDto'
+        type: array
+      status:
+        example: ok
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: |-
+    Stablecoin checkout & order reconciliation prototype trên Stellar TESTNET.
+    Toàn bộ scope là testnet — không có giá trị thật nào được chuyển.
+  license:
+    name: Apache 2.0
+    url: http://www.apache.org/licenses/LICENSE-2.0.html
+  title: Shopble API
+  version: "1.0"
+paths:
+  /orders:
+    get:
+      parameters:
+      - description: Địa chỉ ví buyer
+        in: query
+        name: buyer_wallet
+        required: true
+        type: string
+      - description: Mặc định 50, tối đa 200
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/v1.OrderListEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/v1.ErrorResponse'
+      summary: Liệt kê order intent của một ví buyer
+      tags:
+      - orders
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Order intent
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/v1.CreateOrderRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/v1.CreateOrderEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/v1.ErrorResponse'
+      summary: Tạo order intent và sinh payment instruction testnet
+      tags:
+      - orders
+  /orders/{id}:
+    get:
+      parameters:
+      - description: Order id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/v1.OrderEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/v1.ErrorResponse'
+      summary: Đọc một order intent kèm trạng thái hiện tại
+      tags:
+      - orders
+swagger: "2.0"

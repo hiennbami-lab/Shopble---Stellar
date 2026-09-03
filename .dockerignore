@@ -1,0 +1,23 @@
+# Secrets — build context đi thẳng vào layer, không bao giờ để lọt vào đây.
+config.yml
+*.seed
+
+# Artifact build trên host: binary linux/amd64 được build lại trong image.
+build
+build.sh
+deployment
+dexpay
+main
+shopble
+model
+
+.git
+.gitignore
+.claude
+.codex
+.vscode
+
+*.md
+docker-compose.yml
+*.session.sql
+*.bak

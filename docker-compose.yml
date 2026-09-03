@@ -1,0 +1,71 @@
+name: shopble
+
+# Cổng lệch với các project khác trên cùng máy (postgres 5435, redis 6380, api 8081)
+# để dựng song song mà không tranh cổng.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: shopble_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-shopble}
+    ports:
+      - "${POSTGRES_PORT:-5435}:5432"
+    volumes:
+      - shopble_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-admin} -d ${POSTGRES_DB:-shopble}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: shopble_redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6380}:6379"
+    volumes:
+      - shopble_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # App service nằm sau profile `app`: `docker compose up -d` vẫn chỉ dựng
+  # postgres + redis, không bắt phải có config.yml.
+  #
+  #   docker compose --profile app run --rm api migrate   # một lần, trước khi chạy
+  #   docker compose --profile app up -d
+  #
+  # config.yml trong container phải trỏ postgres:5432 / redis:6379 (tên service),
+  # KHÔNG phải 0.0.0.0:5435 như khi chạy binary trên host.
+  api:
+    build:
+      context: .
+      dockerfile: docker/app/shopble.dockerfile
+    image: shopble:local
+    container_name: shopble_api
+    profiles: ["app"]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Secret: lấy từ env của host hoặc secret manager, không ghi vào file này.
+      SHOPBLE_OPERATOR_SECRET: ${SHOPBLE_OPERATOR_SECRET:-}
+    volumes:
+      - ./config.yml:/etc/shopble/config.yml:ro
+    ports:
+      - "${API_PORT:-8081}:8080"
+
+volumes:
+  shopble_pgdata:
+  shopble_redisdata:

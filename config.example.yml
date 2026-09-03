@@ -1,0 +1,50 @@
+APP_NAME: shopble
+ENV: local
+DEBUG: true
+RELEASE_MODE: dev
+
+DB_CONNECTION: postgres://admin:password@0.0.0.0:5435/shopble?sslmode=disable
+
+# Chạy binary trên host (docker compose publish port ra host) → dùng 0.0.0.0.
+# Chạy trong cùng docker network → đổi thành redis:6379 / postgres:5432.
+CACHE_DB:
+  redis:
+    address: 0.0.0.0:6380
+    db: 0
+
+LOCK_DB:
+  retry_delay: 1 # seconds
+  lock_timeout: 1 # seconds
+  redis:
+    address: 0.0.0.0:6380
+    db: 1
+
+SYSTEM_SEC_CONFIG:
+  secret_key: CHANGE_ME_RANDOM_32B_HEX
+
+JWT_CONFIG:
+  issuer: shopble
+  token_timeout: 900
+  secret_key: CHANGE_ME_JWT_HS256_SECRET
+
+# ---- Shopble project specific ----
+
+# TESTNET ONLY. App từ chối khởi động nếu network_passphrase hoặc horizon_url trỏ
+# vào public network — SOW nói rõ không có giá trị thật nào được chuyển trong scope này.
+STELLAR_CONFIG:
+  horizon_url: https://horizon-testnet.stellar.org
+  soroban_rpc_url: https://soroban-testnet.stellar.org
+  network_passphrase: "Test SDF Network ; September 2015"
+
+  # Stablecoin testnet cố định cho toàn bộ scope. Issuer phải được ghi trong README.
+  asset_code: USDC
+  asset_issuer: "" # G... — issuer của USDC trên testnet
+
+  # Tài khoản nhận thanh toán; watcher stream payment operations của đúng account này.
+  destination_account: "" # G...
+
+  # Deliverable 3. Rỗng cho tới khi contract được deploy lên testnet.
+  contract_id: ""
+  # Secret key S... của operator ký set_status. Giá trị nằm trong biến môi trường
+  # này, KHÔNG nằm trong file config.
+  operator_secret_env_var: SHOPBLE_OPERATOR_SECRET
