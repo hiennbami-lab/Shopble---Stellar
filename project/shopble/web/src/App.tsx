@@ -5,104 +5,176 @@ import {
   createOrder,
   getOrder,
   listOrders,
-  type CreateOrderResult,
+  payUri,
+  TESTNET_PASSPHRASE,
   type OrderDto,
-  type OrderStatus,
-  type RejectReason,
+  type PaymentInstruction,
 } from './api'
 import { connectWallet, disconnectWallet } from './wallet'
-import { isStellarPubKey, validateAmount, validateProductRef } from './validation'
+import { validateAmount, validateProductRef } from './validation'
+import {
+  CopyButton,
+  LedgerRow,
+  REJECT,
+  Row,
+  StatusPill,
+  StatusTrack,
+  shortKey,
+} from './ui'
 
-// ---- Status / reject-reason metadata (first-class in the UI even though the
-// backend can't flip past awaiting_payment yet — Deliverable 2/3 not built). ----
+type View = { name: 'new' } | { name: 'orders' } | { name: 'order'; id: string }
 
-const STATUS_META: Record<OrderStatus, { label: string; cls: string }> = {
-  awaiting_payment: { label: 'Awaiting payment', cls: 'badge-wait' },
-  payment_detected: { label: 'Payment detected', cls: 'badge-detected' },
-  validated: { label: 'Validated', cls: 'badge-ok' },
-  rejected: { label: 'Rejected', cls: 'badge-bad' },
-}
-
-const REJECT_LABEL: Record<Exclude<RejectReason, ''>, string> = {
-  underpayment: 'Underpayment',
-  wrong_asset: 'Wrong asset',
-  wrong_destination: 'Wrong destination',
-  wrong_buyer_wallet: 'Wrong buyer wallet',
-  invalid_memo: 'Invalid memo',
-}
-
-const shortKey = (k: string) => (k.length > 12 ? `${k.slice(0, 6)}…${k.slice(-6)}` : k)
-
-// ---------------------------------------------------------------------------
-
-type Tab = 'new' | 'history'
+const errText = (e: unknown, fallback: string) =>
+  e instanceof ApiError ? e.message : e instanceof Error ? e.message : fallback
 
 export default function App() {
   const [wallet, setWallet] = useState<string | null>(null)
-  const [tab, setTab] = useState<Tab>('new')
-  const [trackingId, setTrackingId] = useState<string | null>(null)
+  const [view, setView] = useState<View>({ name: 'new' })
+  const [connecting, setConnecting] = useState(false)
+  const [walletErr, setWalletErr] = useState<string | null>(null)
+  // Instruction is only returned on create; kept so the slip renders immediately.
+  const [fresh, setFresh] = useState<Record<string, PaymentInstruction>>({})
 
-  const onConnect = async () => {
+  const connect = async () => {
+    setConnecting(true)
+    setWalletErr(null)
     try {
       setWallet(await connectWallet())
+      setView({ name: 'new' })
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Wallet connection failed')
+      setWalletErr(errText(e, 'Could not connect to the wallet.'))
+    } finally {
+      setConnecting(false)
     }
   }
 
+  const disconnect = () => {
+    disconnectWallet().catch(() => {})
+    setWallet(null)
+    setFresh({})
+  }
+
   return (
-    <div className="app">
-      <header>
-        <h1>Shopble</h1>
-        <span className="net">Stellar Testnet</span>
-        <div className="spacer" />
+    <>
+      <header className="topbar">
+        <span className="brand">Shopble</span>
+        <span className="chip-net">testnet</span>
+        <span className="grow" />
         {wallet ? (
-          <div className="wallet">
-            <code title={wallet}>{shortKey(wallet)}</code>
-            <button className="ghost" onClick={() => { disconnectWallet().catch(() => {}); setWallet(null) }}>Disconnect</button>
+          <div className="chip-wallet">
+            <span className="chip-dot" />
+            <span title={wallet}>{shortKey(wallet, 4, 4)}</span>
+            <button className="copy" onClick={disconnect}>Disconnect</button>
           </div>
-        ) : (
-          <button onClick={onConnect}>Connect wallet</button>
-        )}
+        ) : null}
       </header>
 
       {!wallet ? (
-        <p className="hint">Connect a Stellar testnet wallet (Freighter / Wallets Kit) to create an order.</p>
+        <section className="hero">
+          <div>
+          <h1>
+            <span>Every order gets a memo.</span>
+            <span>Every payment carries it back.</span>
+          </h1>
+          <p>
+            Connect a Stellar wallet to create an order and get the payment slip that
+            settles it. The memo on the slip is the order — that is what makes the
+            payment provable against it.
+          </p>
+          {walletErr && <p className="alert" style={{ marginTop: 22, maxWidth: '46ch' }}>{walletErr}</p>}
+          <div className="hero-actions">
+            <button className="btn" onClick={connect} disabled={connecting}>
+              {connecting ? 'Connecting' : 'Connect wallet'}
+            </button>
+            <span className="muted">Testnet only. No real funds move.</span>
+          </div>
+          </div>
+          <aside className="specimen" aria-hidden="true">
+            <p className="amount-label">Amount to pay</p>
+            <p className="amount">
+              25.5000000<span className="amount-unit">USDC</span>
+            </p>
+            <div className="memo">
+              <p className="memo-label">Memo (required)</p>
+              <div className="memo-value">
+                <span className="mono">2iLKk8sQpZ9vTnR4bXcW1yFdA3m</span>
+              </div>
+              <p className="memo-note">
+                Send this as a MEMO_TEXT memo. It is what ties the payment to the order.
+              </p>
+            </div>
+          </aside>
+        </section>
       ) : (
-        <>
-          <nav className="tabs">
-            <button className={tab === 'new' ? 'active' : ''} onClick={() => setTab('new')}>New order</button>
-            <button className={tab === 'history' ? 'active' : ''} onClick={() => setTab('history')}>My orders</button>
+        <div className="shell">
+          <nav className="rail">
+            <button
+              className={`nav${view.name === 'new' ? ' is-active' : ''}`}
+              onClick={() => setView({ name: 'new' })}
+            >
+              New order
+            </button>
+            <button
+              className={`nav${view.name !== 'new' ? ' is-active' : ''}`}
+              onClick={() => setView({ name: 'orders' })}
+            >
+              Orders
+            </button>
           </nav>
 
-          {tab === 'new' && <NewOrder wallet={wallet} onTrack={(id) => setTrackingId(id)} />}
-          {tab === 'history' && <History wallet={wallet} onTrack={(id) => setTrackingId(id)} />}
-        </>
+          <main>
+            {view.name === 'new' && (
+              <NewOrder
+                wallet={wallet}
+                onCreated={(order, instruction) => {
+                  setFresh((f) => ({ ...f, [order.id]: instruction }))
+                  setView({ name: 'order', id: order.id })
+                }}
+              />
+            )}
+            {view.name === 'orders' && (
+              <Orders
+                wallet={wallet}
+                onOpen={(id) => setView({ name: 'order', id })}
+                onNew={() => setView({ name: 'new' })}
+              />
+            )}
+            {view.name === 'order' && (
+              <Order
+                id={view.id}
+                instruction={fresh[view.id]}
+                onBack={() => setView({ name: 'orders' })}
+              />
+            )}
+          </main>
+        </div>
       )}
-
-      {trackingId && <OrderDetail id={trackingId} onClose={() => setTrackingId(null)} />}
-    </div>
+    </>
   )
 }
 
-// ---- Create order + payment instruction ----------------------------------
+// ---------------------------------------------------------------- new order
 
-function NewOrder({ wallet, onTrack }: { wallet: string; onTrack: (id: string) => void }) {
+function NewOrder({
+  wallet,
+  onCreated,
+}: {
+  wallet: string
+  onCreated: (order: OrderDto, instruction: PaymentInstruction) => void
+}) {
   const [productRef, setProductRef] = useState('')
   const [amount, setAmount] = useState('')
-  const [result, setResult] = useState<CreateOrderResult | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setErr(null)
-    const pErr = validateProductRef(productRef)
-    const aErr = validateAmount(amount)
-    if (pErr || aErr) {
-      setErr(pErr ?? aErr)
+    const problem = validateProductRef(productRef) ?? validateAmount(amount)
+    if (problem) {
+      setErr(problem)
       return
     }
+    setErr(null)
     setBusy(true)
     try {
       const res = await createOrder({
@@ -110,87 +182,69 @@ function NewOrder({ wallet, onTrack }: { wallet: string; onTrack: (id: string) =
         expected_amount: amount.trim(),
         buyer_wallet: wallet,
       })
-      setResult(res)
+      onCreated(res.order, res.instruction)
     } catch (e) {
-      setErr(e instanceof ApiError ? `${e.code}: ${e.message}` : 'Request failed')
+      setErr(errText(e, 'Could not create the order.'))
     } finally {
       setBusy(false)
     }
   }
 
-  if (result) {
-    return (
-      <PaymentInstruction
-        res={result}
-        onTrack={() => onTrack(result.order.id)}
-        onNew={() => { setResult(null); setProductRef(''); setAmount('') }}
-      />
-    )
-  }
-
   return (
-    <form className="card" onSubmit={submit}>
-      <h2>New order</h2>
-      <label>
-        Product reference
-        <input value={productRef} onChange={(e) => setProductRef(e.target.value)} placeholder="sku-1024" />
+    <form className="panel" onSubmit={submit}>
+      <div className="panel-head">
+        <h2 className="panel-title">New order</h2>
+        <span className="muted" style={{ fontSize: 13 }}>
+          Paying from <span className="mono" title={wallet}>{shortKey(wallet, 4, 4)}</span>
+        </span>
+      </div>
+
+      {err && <p className="alert">{err}</p>}
+
+      <label className="field">
+        <span className="field-label">Product reference</span>
+        <input
+          className="field-input"
+          value={productRef}
+          onChange={(e) => setProductRef(e.target.value)}
+          placeholder="sku-1024"
+        />
+        <span className="field-hint">Whatever identifies the item on your side.</span>
       </label>
-      <label>
-        Expected amount (USDC)
-        <input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="25.5" inputMode="decimal" />
+
+      <label className="field">
+        <span className="field-label">Amount</span>
+        <span className="field-affix">
+          <input
+            className="field-input"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            placeholder="25.5"
+            inputMode="decimal"
+          />
+          <span className="field-unit">USDC</span>
+        </span>
+        <span className="field-hint">Up to 7 decimal places.</span>
       </label>
-      <p className="muted">Buyer wallet: <code>{shortKey(wallet)}</code></p>
-      {err && <p className="error">{err}</p>}
-      <button type="submit" disabled={busy}>{busy ? 'Creating…' : 'Create order'}</button>
+
+      <button className="btn" type="submit" disabled={busy}>
+        {busy ? 'Creating order' : 'Create order'}
+      </button>
     </form>
   )
 }
 
-function PaymentInstruction({
-  res,
-  onTrack,
-  onNew,
+// ---------------------------------------------------------------- one order
+
+function Order({
+  id,
+  instruction,
+  onBack,
 }: {
-  res: CreateOrderResult
-  onTrack: () => void
-  onNew: () => void
+  id: string
+  instruction?: PaymentInstruction
+  onBack: () => void
 }) {
-  const { order, instruction } = res
-  return (
-    <div className="card">
-      <h2>Pay this order</h2>
-      <div className="pay">
-        <div className="qr">
-          <QRCodeSVG value={instruction.uri} size={200} />
-          <p className="muted">Scan with a Stellar wallet</p>
-        </div>
-        <dl className="fields">
-          <dt>Amount</dt><dd>{instruction.amount} {instruction.asset_code}</dd>
-          <dt>Destination</dt><dd><code title={instruction.destination}>{shortKey(instruction.destination)}</code></dd>
-          <dt>Asset issuer</dt><dd><code title={instruction.asset_issuer}>{shortKey(instruction.asset_issuer)}</code></dd>
-          <dt>Memo ({instruction.memo_type})</dt>
-          <dd className="memo"><code>{instruction.memo}</code></dd>
-          <dt>Network</dt><dd>{instruction.network}</dd>
-        </dl>
-      </div>
-      <p className="warn">
-        The payment <strong>must</strong> carry memo <code>{instruction.memo}</code> ({instruction.memo_type})
-        — it is the order id. Without it, the payment cannot be reconciled to this order.
-      </p>
-      <div className="row">
-        {/* Opens the SEP-0007 pay URI in a registered wallet handler (e.g. Freighter). */}
-        <a className="btn" href={instruction.uri}>Open in wallet</a>
-        <button onClick={onTrack}>Track order</button>
-        <button className="ghost" onClick={onNew}>New order</button>
-      </div>
-      <p className="muted">Order id: <code>{order.id}</code></p>
-    </div>
-  )
-}
-
-// ---- Order detail (polls status) -----------------------------------------
-
-function OrderDetail({ id, onClose }: { id: string; onClose: () => void }) {
   const [order, setOrder] = useState<OrderDto | null>(null)
   const [err, setErr] = useState<string | null>(null)
 
@@ -199,14 +253,13 @@ function OrderDetail({ id, onClose }: { id: string; onClose: () => void }) {
       setOrder(await getOrder(id))
       setErr(null)
     } catch (e) {
-      setErr(e instanceof ApiError ? `${e.code}: ${e.message}` : 'Failed to load order')
+      setErr(errText(e, 'Could not load this order.'))
     }
   }, [id])
 
   useEffect(() => {
     load()
-    // Poll until terminal. Backend can't flip past awaiting_payment yet, but the
-    // loop is ready for payment_detected/validated/rejected once Deliverable 2 lands.
+    // Poll while the order can still change. Stops once it settles either way.
     const t = setInterval(() => {
       setOrder((o) => {
         if (o && (o.status === 'validated' || o.status === 'rejected')) return o
@@ -217,96 +270,173 @@ function OrderDetail({ id, onClose }: { id: string; onClose: () => void }) {
     return () => clearInterval(t)
   }, [load])
 
+  const open = () => (
+    <>
+      <button className="back" onClick={onBack}>Back to orders</button>
+      {err && <p className="alert">{err}</p>}
+    </>
+  )
+
+  if (!order) {
+    return (
+      <>
+        {open()}
+        <div className="panel"><p className="muted">Loading order.</p></div>
+      </>
+    )
+  }
+
+  const payable = order.status === 'awaiting_payment'
+  const uri = instruction?.uri ?? payUri(order)
+
   return (
-    <div className="modal" onClick={onClose}>
-      <div className="card modal-card" onClick={(e) => e.stopPropagation()}>
-        <div className="row between">
-          <h2>Order</h2>
-          <button className="ghost" onClick={onClose}>Close</button>
+    <>
+      {open()}
+
+      <section className="panel">
+        <div className="panel-head">
+          <h2 className="panel-title">{order.product_ref}</h2>
+          {!payable && <StatusPill status={order.status} />}
         </div>
-        {err && <p className="error">{err}</p>}
-        {!order ? (
-          <p className="muted">Loading…</p>
-        ) : (
+
+        <StatusTrack status={order.status} />
+
+        {order.status === 'rejected' && order.reject_reason && (
+          <p className="reject-note">{REJECT[order.reject_reason]}</p>
+        )}
+
+        {payable && (
           <>
-            <StatusBadge status={order.status} reason={order.reject_reason} />
-            <dl className="fields">
-              <dt>Order id</dt><dd><code>{order.id}</code></dd>
-              <dt>Product</dt><dd>{order.product_ref}</dd>
-              <dt>Expected</dt><dd>{order.expected_amount} {order.asset_code}</dd>
-              <dt>Buyer wallet</dt><dd><code title={order.buyer_wallet}>{shortKey(order.buyer_wallet)}</code></dd>
-              <dt>Memo</dt><dd><code>{order.memo}</code></dd>
-              {order.on_chain_tx_hash && (
-                <>
-                  <dt>Tx hash</dt>
-                  <dd>
-                    <a href={`https://stellar.expert/explorer/testnet/tx/${order.on_chain_tx_hash}`} target="_blank" rel="noreferrer">
-                      <code>{shortKey(order.on_chain_tx_hash)}</code>
-                    </a>
-                  </dd>
-                </>
-              )}
-            </dl>
-            {order.status === 'awaiting_payment' && (
-              <p className="muted">Waiting for payment to be detected on-chain (auto-refreshing).</p>
-            )}
+          <div className="slip">
+            <div>
+              <p className="amount-label">Amount to pay</p>
+              <p className="amount">
+                {order.expected_amount}
+                <span className="amount-unit">{order.asset_code}</span>
+              </p>
+
+              <div className="memo">
+                <p className="memo-label">Memo (required)</p>
+                <div className="memo-value">
+                  <span className="mono">{order.memo}</span>
+                  <CopyButton value={order.memo} label="memo" />
+                </div>
+                <p className="memo-note">
+                  Send this as a MEMO_TEXT memo. Without it the payment cannot be
+                  matched to this order, even if the amount is right.
+                </p>
+              </div>
+            </div>
+
+            <div className="qr">
+              <QRCodeSVG value={uri} size={166} level="M" bgColor="#ffffff" fgColor="#101828" />
+              <p className="qr-cap">Scan to pay</p>
+            </div>
+          </div>
+
+          <div className="actions">
+            <a className="btn" href={uri}>Open in wallet</a>
+            <CopyButton value={uri} label="payment link" text="Copy payment link" />
+            <span className="live"><span className="live-dot" />Checking the ledger</span>
+          </div>
           </>
         )}
-      </div>
-    </div>
+      </section>
+
+      <section className="section">
+        <h3 className="section-title">Details</h3>
+        <div className="ledger">
+          <LedgerRow label="Order" value={order.id} />
+          <Row label="Amount">
+            <span className="mono">{order.expected_amount} {order.asset_code}</span>
+          </Row>
+          <LedgerRow label="Destination" value={order.destination_account} short />
+          <LedgerRow label="Asset issuer" value={order.asset_issuer} short />
+          <LedgerRow label="Buyer wallet" value={order.buyer_wallet} short />
+          <Row label="Network">
+            <span className="mono">{instruction?.network ?? TESTNET_PASSPHRASE}</span>
+          </Row>
+          <Row label="Created">
+            <span>{new Date(order.created_at * 1000).toLocaleString()}</span>
+          </Row>
+          {order.on_chain_tx_hash && (
+            <Row label="Transaction">
+              <a
+                className="mono"
+                href={`https://stellar.expert/explorer/testnet/tx/${order.on_chain_tx_hash}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {shortKey(order.on_chain_tx_hash, 10, 10)}
+              </a>
+              <CopyButton value={order.on_chain_tx_hash} label="transaction hash" />
+            </Row>
+          )}
+        </div>
+      </section>
+    </>
   )
 }
 
-function StatusBadge({ status, reason }: { status: OrderStatus; reason: RejectReason }) {
-  const m = STATUS_META[status]
-  return (
-    <p>
-      <span className={`badge ${m.cls}`}>{m.label}</span>
-      {status === 'rejected' && reason && (
-        <span className="reject"> — {REJECT_LABEL[reason]}</span>
-      )}
-    </p>
-  )
-}
+// ----------------------------------------------------------------- history
 
-// ---- Order history -------------------------------------------------------
-
-function History({ wallet, onTrack }: { wallet: string; onTrack: (id: string) => void }) {
+function Orders({
+  wallet,
+  onOpen,
+  onNew,
+}: {
+  wallet: string
+  onOpen: (id: string) => void
+  onNew: () => void
+}) {
   const [orders, setOrders] = useState<OrderDto[] | null>(null)
   const [err, setErr] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!isStellarPubKey(wallet)) {
-      setErr('Connected wallet is not a valid Stellar key')
-      return
-    }
     listOrders(wallet)
       .then((o) => { setOrders(o); setErr(null) })
-      .catch((e) => setErr(e instanceof ApiError ? `${e.code}: ${e.message}` : 'Failed to load orders'))
+      .catch((e) => setErr(errText(e, 'Could not load your orders.')))
   }, [wallet])
 
-  if (err) return <div className="card"><p className="error">{err}</p></div>
-  if (!orders) return <div className="card"><p className="muted">Loading…</p></div>
-  if (orders.length === 0) return <div className="card"><p className="muted">No orders yet.</p></div>
-
   return (
-    <div className="card">
-      <h2>My orders</h2>
-      <table className="orders">
-        <thead>
-          <tr><th>Product</th><th>Amount</th><th>Status</th><th></th></tr>
-        </thead>
-        <tbody>
-          {orders.map((o) => (
-            <tr key={o.id}>
-              <td>{o.product_ref}</td>
-              <td>{o.expected_amount} {o.asset_code}</td>
-              <td><span className={`badge ${STATUS_META[o.status].cls}`}>{STATUS_META[o.status].label}</span></td>
-              <td><button className="ghost" onClick={() => onTrack(o.id)}>View</button></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <section className="panel">
+      <div className="panel-head"><h2 className="panel-title">Orders</h2></div>
+
+      {err && <p className="alert">{err}</p>}
+      {!err && !orders && <p className="muted">Loading orders.</p>}
+
+      {orders && orders.length === 0 && (
+        <div className="empty">
+          <h3>No orders yet</h3>
+          <p>Create an order to get its payment slip.</p>
+          <button className="btn" onClick={onNew}>New order</button>
+        </div>
+      )}
+
+      {orders && orders.length > 0 && (
+        <div className="table-scroll">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Product</th>
+                <th>Amount</th>
+                <th>Created</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {orders.map((o) => (
+                <tr key={o.id} onClick={() => onOpen(o.id)}>
+                  <td>{o.product_ref}</td>
+                  <td><span className="mono">{o.expected_amount} {o.asset_code}</span></td>
+                  <td className="muted">{new Date(o.created_at * 1000).toLocaleDateString()}</td>
+                  <td><StatusPill status={o.status} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   )
 }

@@ -101,3 +101,21 @@ export const listOrders = (buyerWallet: string, limit = 50) =>
   request<OrderDto[]>(
     `/api/v1/orders?buyer_wallet=${encodeURIComponent(buyerWallet)}&limit=${limit}`,
   )
+
+export const TESTNET_PASSPHRASE = 'Test SDF Network ; September 2015'
+
+// The backend only returns `instruction.uri` when the order is created. An order
+// reopened from history has every field the SEP-0007 pay URI needs, so rebuild it
+// rather than hiding the QR.
+export function payUri(o: OrderDto): string {
+  const q = new URLSearchParams({
+    destination: o.destination_account,
+    amount: o.expected_amount,
+    asset_code: o.asset_code,
+    asset_issuer: o.asset_issuer,
+    memo: o.memo,
+    memo_type: 'MEMO_TEXT',
+    network_passphrase: TESTNET_PASSPHRASE,
+  })
+  return `web+stellar:pay?${q}`
+}
