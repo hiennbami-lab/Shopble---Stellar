@@ -13,6 +13,52 @@
     "host": "localhost:8080",
     "basePath": "/api/v1",
     "paths": {
+        "/evidence": {
+            "get": {
+                "description": "Nguồn cho bảng kết quả 15 transaction của SOW Deliverable 2: mỗi dòng có tx hash, link Stellar Expert, verdict và detection latency.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "evidence"
+                ],
+                "summary": "Liệt kê payment evidence thô đọc từ ledger",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Lọc theo order",
+                        "name": "order_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Lọc theo verdict: matched | rejected | duplicate",
+                        "name": "verdict",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Mặc định 50, tối đa 200",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/v1.EvidenceListEnvelope"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/v1.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/orders": {
             "get": {
                 "produces": [
@@ -113,6 +159,41 @@
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/v1.OrderEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/v1.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/orders/{id}/evidence": {
+            "get": {
+                "description": "View cho người review theo SOW: order intent, mọi payment đã quan sát cho order đó, và so sánh từng field.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "evidence"
+                ],
+                "summary": "Order kèm bằng chứng, dạng expected-versus-observed",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Order id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/v1.OrderEvidenceEnvelope"
                         }
                     },
                     "404": {
@@ -230,6 +311,94 @@
                 }
             }
         },
+        "v1.EvidenceDto": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "string"
+                },
+                "asset_code": {
+                    "type": "string"
+                },
+                "asset_issuer": {
+                    "type": "string"
+                },
+                "captured_at": {
+                    "type": "integer"
+                },
+                "destination_account": {
+                    "type": "string"
+                },
+                "detection_latency_seconds": {
+                    "description": "DetectionLatencySeconds — captured_at trừ ledger_close_at.",
+                    "type": "integer"
+                },
+                "explorer_url": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "ledger_close_at": {
+                    "type": "integer"
+                },
+                "memo": {
+                    "type": "string"
+                },
+                "op_id": {
+                    "type": "string"
+                },
+                "order_id": {
+                    "type": "string"
+                },
+                "reject_reason": {
+                    "type": "string"
+                },
+                "source_account": {
+                    "type": "string"
+                },
+                "tx_hash": {
+                    "type": "string"
+                },
+                "verdict": {
+                    "type": "string",
+                    "example": "matched"
+                }
+            }
+        },
+        "v1.EvidenceListEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/v1.EvidenceDto"
+                    }
+                },
+                "status": {
+                    "type": "string",
+                    "example": "ok"
+                }
+            }
+        },
+        "v1.FieldComparison": {
+            "type": "object",
+            "properties": {
+                "expected": {
+                    "type": "string"
+                },
+                "field": {
+                    "type": "string",
+                    "example": "asset_code"
+                },
+                "match": {
+                    "type": "boolean"
+                },
+                "observed": {
+                    "type": "string"
+                }
+            }
+        },
         "v1.OrderDto": {
             "type": "object",
             "properties": {
@@ -281,6 +450,46 @@
             "properties": {
                 "data": {
                     "$ref": "#/definitions/v1.OrderDto"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "ok"
+                }
+            }
+        },
+        "v1.OrderEvidenceData": {
+            "type": "object",
+            "properties": {
+                "evidence": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/v1.OrderEvidenceDto"
+                    }
+                },
+                "order": {
+                    "$ref": "#/definitions/v1.OrderDto"
+                }
+            }
+        },
+        "v1.OrderEvidenceDto": {
+            "type": "object",
+            "properties": {
+                "comparison": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/v1.FieldComparison"
+                    }
+                },
+                "evidence": {
+                    "$ref": "#/definitions/v1.EvidenceDto"
+                }
+            }
+        },
+        "v1.OrderEvidenceEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/v1.OrderEvidenceData"
                 },
                 "status": {
                     "type": "string",

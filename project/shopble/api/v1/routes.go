@@ -10,4 +10,6 @@ func Init(group *gin.RouterGroup) {
 	group.POST("/orders", CreateOrder)
 	group.GET("/orders", ListOrders)
 	group.GET("/orders/:id", GetOrder)
+	group.GET("/orders/:id/evidence", GetOrderEvidence)
+	group.GET("/evidence", ListEvidence)
 }

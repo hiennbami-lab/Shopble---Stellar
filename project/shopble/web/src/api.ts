@@ -28,8 +28,8 @@ export interface OrderDto {
   memo: string
   buyer_wallet: string
   status: OrderStatus
-  reject_reason: RejectReason
-  on_chain_tx_hash: string
+  reject_reason?: RejectReason
+  on_chain_tx_hash?: string
   created_at: number
   updated_at: number
 }
@@ -94,9 +94,6 @@ export const createOrder = (b: CreateOrderBody) =>
     body: JSON.stringify(b),
   })
 
-export const getOrder = (id: string) =>
-  request<OrderDto>(`/api/v1/orders/${encodeURIComponent(id)}`)
-
 export const listOrders = (buyerWallet: string, limit = 50) =>
   request<OrderDto[]>(
     `/api/v1/orders?buyer_wallet=${encodeURIComponent(buyerWallet)}&limit=${limit}`,
@@ -119,3 +116,46 @@ export function payUri(o: OrderDto): string {
   })
   return `web+stellar:pay?${q}`
 }
+
+export type Verdict = 'matched' | 'rejected' | 'duplicate'
+
+export interface EvidenceRecord {
+  id: string
+  op_id: string
+  tx_hash: string
+  explorer_url: string
+  source_account: string
+  destination_account: string
+  asset_code: string
+  asset_issuer: string
+  amount: string
+  memo: string
+  ledger_close_at: number
+  captured_at: number
+  detection_latency_seconds: number
+  order_id?: string
+  verdict: Verdict
+  reject_reason?: RejectReason
+}
+
+export interface ComparisonRow {
+  field: string
+  expected: string
+  observed: string
+  match: boolean
+}
+
+export interface OrderEvidence {
+  evidence: EvidenceRecord
+  comparison: ComparisonRow[]
+}
+
+export interface OrderEvidenceResult {
+  order: OrderDto
+  evidence: OrderEvidence[]
+}
+
+// Returns the order *and* everything observed for it, so the order screen needs
+// one request rather than two.
+export const getOrderEvidence = (id: string) =>
+  request<OrderEvidenceResult>(`/api/v1/orders/${encodeURIComponent(id)}/evidence`)

@@ -25,3 +25,9 @@ CLAUDE.md
 .codex
 
 node_modules
+.agents
+
+# Rust / Soroban contracts
+contracts/target/
+test_snapshots/
+.stellar/

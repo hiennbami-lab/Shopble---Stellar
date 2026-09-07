@@ -25,7 +25,8 @@ var watchCmd = cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		stream, _ := cmd.Flags().GetString("stream")
 		interval, _ := cmd.Flags().GetInt("interval")
-		w := watcher.New(stream, time.Duration(interval)*time.Second)
+		noChain, _ := cmd.Flags().GetBool("no-chain")
+		w := watcher.New(stream, time.Duration(interval)*time.Second, !noChain)
 		comrunner.RunSession(comrunner.NewSession(w))
 	},
 }
@@ -34,4 +35,5 @@ func init() {
 	rootCmd.AddCommand(&watchCmd)
 	watchCmd.Flags().String("stream", "payments", "Cursor stream name")
 	watchCmd.Flags().Int("interval", 3, "Seconds to wait after catching up before polling again")
+	watchCmd.Flags().Bool("no-chain", false, "Do not write verdicts to the Soroban contract")
 }

@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import type { OrderStatus, RejectReason } from './api'
+import type { OrderStatus, RejectReason, Verdict } from './api'
 
 export const shortKey = (k: string, head = 6, tail = 6) =>
   k.length > head + tail + 1 ? `${k.slice(0, head)}…${k.slice(-tail)}` : k
@@ -18,6 +18,29 @@ export const REJECT: Record<Exclude<RejectReason, ''>, string> = {
   wrong_destination: 'The payment went to a different account.',
   wrong_buyer_wallet: 'The payment came from a different wallet.',
   invalid_memo: 'The memo did not match this order.',
+}
+
+export const VERDICT: Record<Verdict, { label: string; tone: string }> = {
+  matched: { label: 'Matched', tone: 'ok' },
+  rejected: { label: 'Rejected', tone: 'bad' },
+  duplicate: { label: 'Duplicate', tone: 'det' },
+}
+
+// The six fields the matcher compares, in the order the backend returns them.
+export const FIELD_LABEL: Record<string, string> = {
+  amount: 'Amount',
+  asset_code: 'Asset',
+  asset_issuer: 'Asset issuer',
+  destination_account: 'Destination',
+  buyer_wallet: 'Buyer wallet',
+  memo: 'Memo',
+}
+
+export function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m`
+  if (seconds < 86400) return `${Math.round(seconds / 3600)}h`
+  return `${Math.round(seconds / 86400)}d`
 }
 
 export function StatusPill({ status }: { status: OrderStatus }) {

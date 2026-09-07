@@ -3,22 +3,27 @@ import { QRCodeSVG } from 'qrcode.react'
 import {
   ApiError,
   createOrder,
-  getOrder,
+  getOrderEvidence,
   listOrders,
   payUri,
   TESTNET_PASSPHRASE,
   type OrderDto,
+  type OrderEvidence,
   type PaymentInstruction,
 } from './api'
 import { connectWallet, disconnectWallet } from './wallet'
+import { payErrorText, payWithWallet, type PayPhase } from './pay'
 import { validateAmount, validateProductRef } from './validation'
 import {
   CopyButton,
+  FIELD_LABEL,
   LedgerRow,
   REJECT,
   Row,
   StatusPill,
   StatusTrack,
+  VERDICT,
+  formatDuration,
   shortKey,
 } from './ui'
 
@@ -142,6 +147,7 @@ export default function App() {
             {view.name === 'order' && (
               <Order
                 id={view.id}
+                wallet={wallet}
                 instruction={fresh[view.id]}
                 onBack={() => setView({ name: 'orders' })}
               />
@@ -238,19 +244,27 @@ function NewOrder({
 
 function Order({
   id,
+  wallet,
   instruction,
   onBack,
 }: {
   id: string
+  wallet: string
   instruction?: PaymentInstruction
   onBack: () => void
 }) {
   const [order, setOrder] = useState<OrderDto | null>(null)
+  const [evidence, setEvidence] = useState<OrderEvidence[]>([])
   const [err, setErr] = useState<string | null>(null)
+  const [phase, setPhase] = useState<PayPhase | null>(null)
+  const [payErr, setPayErr] = useState<string | null>(null)
+  const [paidTx, setPaidTx] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
-      setOrder(await getOrder(id))
+      const res = await getOrderEvidence(id)
+      setOrder(res.order)
+      setEvidence(res.evidence)
       setErr(null)
     } catch (e) {
       setErr(errText(e, 'Could not load this order.'))
@@ -288,6 +302,32 @@ function Order({
 
   const payable = order.status === 'awaiting_payment'
   const uri = instruction?.uri ?? payUri(order)
+
+  const pay = async () => {
+    setPayErr(null)
+    setPaidTx(null)
+    try {
+      const hash = await payWithWallet(wallet, {
+        destination: order.destination_account,
+        asset_code: order.asset_code,
+        asset_issuer: order.asset_issuer,
+        amount: order.expected_amount,
+        memo: order.memo,
+      }, setPhase)
+      setPaidTx(hash)
+      load()
+    } catch (e) {
+      setPayErr(payErrorText(e))
+    } finally {
+      setPhase(null)
+    }
+  }
+
+  const PHASE_TEXT: Record<PayPhase, string> = {
+    building: 'Building the transaction',
+    signing: 'Waiting for your wallet to sign',
+    submitting: 'Submitting to the network',
+  }
 
   return (
     <>
@@ -335,13 +375,34 @@ function Order({
           </div>
 
           <div className="actions">
-            <a className="btn" href={uri}>Open in wallet</a>
+            <button className="btn" onClick={pay} disabled={phase !== null}>
+              {phase ? PHASE_TEXT[phase] : 'Pay with wallet'}
+            </button>
+            <a className="btn btn-secondary" href={uri}>Open in wallet</a>
             <CopyButton value={uri} label="payment link" text="Copy payment link" />
             <span className="live"><span className="live-dot" />Checking the ledger</span>
           </div>
+
+          {payErr && <p className="alert pay-result">{payErr}</p>}
+          {paidTx && (
+            <p className="pay-ok">
+              Payment submitted.{' '}
+              <a
+                className="mono"
+                href={`https://stellar.expert/explorer/testnet/tx/${paidTx}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {shortKey(paidTx, 8, 8)}
+              </a>{' '}
+              The matcher picks it up once the ledger closes.
+            </p>
+          )}
           </>
         )}
       </section>
+
+      <Evidence entries={evidence} />
 
       <section className="section">
         <h3 className="section-title">Details</h3>
@@ -375,6 +436,71 @@ function Order({
         </div>
       </section>
     </>
+  )
+}
+
+// --------------------------------------------------- expected vs observed
+
+const truncate = (v: string) => (v.length > 24 ? shortKey(v, 8, 8) : v)
+
+// Why a verdict was reached, field by field, without reading matcher code.
+function Evidence({ entries }: { entries: OrderEvidence[] }) {
+  return (
+    <section className="section">
+      <h3 className="section-title">Payment evidence</h3>
+
+      {entries.length === 0 ? (
+        <p className="ev-empty">
+          Nothing has been seen on the ledger for this order yet. Payments show up here
+          within seconds of the ledger closing, matched field by field against the order.
+        </p>
+      ) : (
+        entries.map(({ evidence, comparison }) => (
+          <article className="ev" key={evidence.id}>
+            <header className="ev-head">
+              <span className={`pill pill-${VERDICT[evidence.verdict].tone}`}>
+                {VERDICT[evidence.verdict].label}
+              </span>
+              {evidence.reject_reason && (
+                <span className="ev-reason">{REJECT[evidence.reject_reason]}</span>
+              )}
+              <span className="grow" />
+              <a className="mono" href={evidence.explorer_url} target="_blank" rel="noreferrer">
+                {shortKey(evidence.tx_hash, 8, 8)}
+              </a>
+            </header>
+
+            <table className="cmp">
+              <thead>
+                <tr>
+                  <th>Field</th>
+                  <th>Expected</th>
+                  <th>Observed</th>
+                </tr>
+              </thead>
+              <tbody>
+                {comparison.map((row) => (
+                  <tr key={row.field} className={row.match ? undefined : 'is-mismatch'}>
+                    <td>{FIELD_LABEL[row.field] ?? row.field}</td>
+                    <td><span className="mono" title={row.expected}>{truncate(row.expected)}</span></td>
+                    <td className="obs">
+                      {row.observed
+                        ? <span className="mono" title={row.observed}>{truncate(row.observed)}</span>
+                        : <span className="muted">none</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <p className="ev-foot">
+              Ledger closed {new Date(evidence.ledger_close_at * 1000).toLocaleString()}, picked
+              up {formatDuration(evidence.detection_latency_seconds)} later.
+            </p>
+          </article>
+        ))
+      )}
+    </section>
   )
 }
 

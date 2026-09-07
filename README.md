@@ -10,15 +10,22 @@ Stellar trả tiền cho **một order cụ thể**, và hệ thống chứng mi
 
 ## Asset
 
-Scope dùng đúng **một** stablecoin testnet cố định. Điền vào `config.yml` và ghi lại ở đây:
+Scope dùng đúng **một** stablecoin testnet cố định:
 
 | | |
 |---|---|
 | Asset code | `USDC` |
-| Issuer | _(chưa set — điền `STELLAR_CONFIG.asset_issuer`)_ |
+| Issuer | `GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5` |
 | Network passphrase | `Test SDF Network ; September 2015` |
 | Horizon | `https://horizon-testnet.stellar.org` |
-| Destination account | _(chưa set — điền `STELLAR_CONFIG.destination_account`)_ |
+| Soroban RPC | `https://soroban-testnet.stellar.org` |
+| Destination account | `GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ` |
+| Order-status contract | `CCVC5G47V7EBMZNCRO2SBIJRD67RTMIZMOL75UEAIHCAF3HHXXNQNHCO` |
+| Contract operator | `GDE7NZL663QM3CSG3V7XPIVSYFQXXI7VWSCSBGQAPLZ2MVSMOJFLQHDI` |
+
+> **Destination account phải có trustline tới USDC/issuer ở trên.** Stellar không cho một
+> account nhận non-native asset khi chưa có trustline: payment sẽ hỏng ngay trên ledger với
+> `op_no_trust`, và không có gì trong backend sửa được chuyện đó.
 
 ## Chạy local
 
@@ -33,21 +40,45 @@ cp config.example.yml config.yml
 # 3. Build. Tag `shopble` là BẮT BUỘC — thiếu nó binary không có lệnh nào.
 go build --tags shopble -o shopble ./main.go
 
-# 4. Migrate rồi chạy
+# 4. Migrate
 CONFIG_PATH=./config.yml ./shopble migrate
+
+# 5. Secret của operator ký set_status (chỉ cần khi contract_id đã set).
+#    KHÔNG nằm trong config file — tên biến do config.operator_secret_env_var chỉ ra.
+export SHOPBLE_OPERATOR_SECRET=$(stellar keys secret shopble-operator)
+
+# 6a. Chạy riêng từng phần
 CONFIG_PATH=./config.yml ./shopble api http --port 8080
+CONFIG_PATH=./config.yml ./shopble watch --interval 3
+
+# 6b. Hoặc gộp API + watcher vào một process (một service trên VPS)
+CONFIG_PATH=./config.yml ./shopble serve --port 8080 --interval 3
+
+# 6c. Làm frontend, không cần ghi on-chain? Tắt hẳn, và phải nói ra:
+CONFIG_PATH=./config.yml ./shopble serve --port 8080 --no-chain
 ```
+
+Thiếu `SHOPBLE_OPERATOR_SECRET` trong khi `contract_id` đã set thì watcher **chết lúc boot**,
+không im lặng bỏ qua. Bỏ qua âm thầm sẽ dẫn tới order `validated` trong Postgres nhưng không
+bao giờ có trên chain — và chỉ lộ ra lúc đi tìm bằng chứng on-chain. Muốn chạy không chain thì
+dùng `--no-chain`.
+
+`DB_CONNECTION` đọc được từ biến môi trường (viper `AutomaticEnv`), nên khi deploy có thể
+để config file không chứa credential nào và truyền connection string qua env.
 
 - Health: <http://localhost:8080/health>
 - Swagger: <http://localhost:8080/swagger/index.html>
 
 Regen swagger sau khi đổi annotation:
 
+> Đừng dùng `git checkout -- go.mod go.sum` để dọn: nó xoá luôn dependency mới thêm mà
+> chưa commit. `go mod tidy` cho kết quả sạch tương đương mà không mất gì.
+
 ```bash
 GOFLAGS=-mod=mod go run github.com/swaggo/swag/cmd/swag@v1.16.6 init \
   -g project/shopble/services/api/swagger_anchor.go -o project/shopble/docs \
   --parseDependency --parseInternal --parseDepth 2
-git checkout -- go.mod go.sum   # swag làm bẩn go.mod
+go mod tidy                     # swag làm bẩn go.mod; tidy dọn lại
 ```
 
 ## API hiện có
@@ -57,6 +88,8 @@ git checkout -- go.mod go.sum   # swag làm bẩn go.mod
 | `POST` | `/api/v1/orders` | Tạo order intent, trả về payment instruction (payload SEP-0007 + các field rời) |
 | `GET` | `/api/v1/orders?buyer_wallet=G...` | Order của một ví |
 | `GET` | `/api/v1/orders/{id}` | Một order kèm trạng thái |
+| `GET` | `/api/v1/orders/{id}/evidence` | Order + payment đã quan sát, so sánh **expected vs observed** từng field |
+| `GET` | `/api/v1/evidence?verdict=&order_id=&limit=` | Evidence thô, kèm link Stellar Expert và detection latency |
 
 Không có tài khoản user. **Ví đã connect chính là danh tính của buyer** — `buyer_wallet`
 lưu trên order intent là thứ matcher đối chiếu với source account của payment.
@@ -84,13 +117,50 @@ destination, asset, amount, memo, ledger close time) cộng verdict. `op_id` là
 đây là thứ duy nhất làm ingestion replay-safe khi watcher restart và stream lại từ
 cursor cũ.
 
+## Watcher
+
+Watcher **poll** `/accounts/{destination}/payments` của Horizon theo cursor, thay vì dùng SSE
+như bản kế hoạch ban đầu mô tả. Quan sát được là như nhau, và cursor lưu trong DB làm cho việc
+restart trở nên bình thường: `payment_evidence.op_id` là unique, nên đọc lại một đoạn ledger
+chỉ tạo ra INSERT bị `ON CONFLICT DO NOTHING` nuốt, không đếm trùng payment. Cursor chỉ được
+ghi trong cùng transaction với evidence.
+
+Lần chạy đầu tiên trên một account đã có lịch sử sẽ backfill toàn bộ payment cũ. Chúng đều
+thành `rejected/invalid_memo` (không memo nào khớp order nào) — vô hại, nhưng `detection_latency_seconds`
+của các dòng backfill là khoảng cách tới quá khứ, **không** phải độ trễ phát hiện thật. Chỉ
+payment quan sát lúc watcher đang chạy mới có latency có nghĩa.
+
+## Contract order-status (Soroban)
+
+Nguồn: `contracts/order-status/`. Contract lưu **chỉ** trạng thái order — không giữ token,
+không chuyển tiền, không escrow, không gọi contract khác.
+
+```bash
+cd contracts && cargo test          # unit test
+stellar contract build              # ra target/wasm32v1-none/release/order_status.wasm
+```
+
+| Hàm | Ghi chú |
+|---|---|
+| `create_order(order_id, buyer, expected_amount, asset, memo_hash)` | Mở order ở `AwaitingPayment` |
+| `set_status(order_id, status)` | Operator ký; contract tự chặn bước nhảy sai |
+| `get_order(order_id)` | Đọc tự do, không cần auth |
+| `is_fulfillable(order_id)` | `true` chỉ khi `Validated` |
+
+Contract lưu **hash** của memo chứ không lưu memo: memo chính là order id, đưa nguyên lên
+chain là công khai luôn mối nối giữa ví buyer và một đơn hàng cụ thể.
+
+State machine được ép ở CẢ HAI phía. Contract từ chối `AwaitingPayment → Validated`
+(lỗi `#3 InvalidTransition`), nên một bug ở backend không thể tự đánh dấu order đủ điều kiện
+fulfilment khi chưa từng quan sát thấy payment nào.
+
 ## Trạng thái so với SOW
 
 | Deliverable | Trạng thái |
 |---|---|
-| 1 — Order intent + payment instruction | Backend xong. Còn wallet connect (Freighter / Stellar Wallets Kit) ở FE |
-| 2 — Horizon watcher + matching engine | Data model + enum xong. Watcher và matcher chưa viết |
-| 3 — Soroban order-status contract | Chưa bắt đầu. Config đã chừa `contract_id` + `operator_secret_env_var` |
+| 1 — Order intent + payment instruction | Backend xong, FE wallet connect xong. Còn: signable transaction ở FE, và 10 run tài liệu hoá |
+| 2 — Horizon watcher + matching engine | Xong: watcher, cursor, evidence, matcher 5 lý do, duplicate detection, API đọc evidence. Còn: 15 transaction của test campaign |
+| 3 — Soroban order-status contract | Xong: contract + 10 unit test, deploy testnet, backend ghi verdict qua Soroban RPC |
 
 ## Layout
 
@@ -99,7 +169,11 @@ api/ common/ config/ database/ glib/   framework dùng chung
 project/shopble/
   api/v1/         HTTP handlers + DTO
   cmd/            cobra commands (api, migrate)
-  lib/libstellar/ config Stellar + payment instruction builder
+  lib/libstellar/ config Stellar + payment instruction builder + Horizon client
+  lib/libsoroban/ ghi verdict lên contract qua Soroban RPC
+  services/watcher/ watcher + matching engine
+  web/            frontend (Vite + React)
+contracts/order-status/  Soroban contract (Rust)
   models/         GORM models + state machine
   services/api/   router + server bootstrap
 ```

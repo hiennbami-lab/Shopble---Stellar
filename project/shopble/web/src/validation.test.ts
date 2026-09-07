@@ -26,3 +26,30 @@ describe('validateProductRef', () => {
   it('rejects empty', () => expect(validateProductRef('')).not.toBeNull())
   it('rejects > 255 chars', () => expect(validateProductRef('x'.repeat(256))).not.toBeNull())
 })
+
+import { formatDuration } from './ui'
+
+describe('formatDuration', () => {
+  it('keeps seconds under a minute', () => expect(formatDuration(4)).toBe('4s'))
+  it('rounds to minutes', () => expect(formatDuration(150)).toBe('3m'))
+  it('rounds to hours', () => expect(formatDuration(7200)).toBe('2h'))
+  it('rounds to days', () => expect(formatDuration(3924875)).toBe('45d'))
+})
+
+import { payErrorText } from './pay'
+
+const horizonError = (result_codes: unknown) => ({ response: { data: { extras: { result_codes } } } })
+
+describe('payErrorText', () => {
+  it('explains a known operation code and keeps the raw code', () => {
+    const t = payErrorText(horizonError({ transaction: 'tx_failed', operations: ['op_no_trust'] }))
+    expect(t).toContain('no trustline')
+    expect(t).toContain('op_no_trust')
+  })
+  it('skips op_success to find the real failure', () =>
+    expect(payErrorText(horizonError({ operations: ['op_success', 'op_underfunded'] }))).toContain('op_underfunded'))
+  it('falls back to the transaction code when no op code explains it', () =>
+    expect(payErrorText(horizonError({ transaction: 'tx_bad_auth' }))).toBe('tx_bad_auth'))
+  it('falls back to the error message when Horizon gave no codes', () =>
+    expect(payErrorText(new Error('network down'))).toBe('network down'))
+})

@@ -78,3 +78,53 @@ func toOrderDto(row *models.OrderIntent) OrderDto {
 		UpdatedAt:          row.UpdatedAt,
 	}
 }
+
+// EvidenceDto — bằng chứng thô một payment, cộng link explorer và detection latency
+// (hai thứ SOW Deliverable 2 bắt có trong bảng kết quả).
+type EvidenceDto struct {
+	Id                 string `json:"id"`
+	OpId               string `json:"op_id"`
+	TxHash             string `json:"tx_hash"`
+	ExplorerUrl        string `json:"explorer_url"`
+	SourceAccount      string `json:"source_account"`
+	DestinationAccount string `json:"destination_account"`
+	AssetCode          string `json:"asset_code"`
+	AssetIssuer        string `json:"asset_issuer"`
+	Amount             string `json:"amount"`
+	Memo               string `json:"memo"`
+	LedgerCloseAt      int64  `json:"ledger_close_at"`
+	CapturedAt         int64  `json:"captured_at"`
+	// DetectionLatencySeconds — captured_at trừ ledger_close_at.
+	DetectionLatencySeconds int64  `json:"detection_latency_seconds"`
+	OrderId                 string `json:"order_id,omitempty"`
+	Verdict                 string `json:"verdict" example:"matched"`
+	RejectReason            string `json:"reject_reason,omitempty"`
+}
+
+// FieldComparison — một field expected đặt cạnh observed.
+type FieldComparison struct {
+	Field    string `json:"field" example:"asset_code"`
+	Expected string `json:"expected"`
+	Observed string `json:"observed"`
+	Match    bool   `json:"match"`
+}
+
+type OrderEvidenceDto struct {
+	Evidence   EvidenceDto       `json:"evidence"`
+	Comparison []FieldComparison `json:"comparison"`
+}
+
+type OrderEvidenceData struct {
+	Order    OrderDto           `json:"order"`
+	Evidence []OrderEvidenceDto `json:"evidence"`
+}
+
+type EvidenceListEnvelope struct {
+	Status string        `json:"status" example:"ok"`
+	Data   []EvidenceDto `json:"data"`
+}
+
+type OrderEvidenceEnvelope struct {
+	Status string            `json:"status" example:"ok"`
+	Data   OrderEvidenceData `json:"data"`
+}

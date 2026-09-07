@@ -73,6 +73,65 @@ definitions:
         example: error
         type: string
     type: object
+  v1.EvidenceDto:
+    properties:
+      amount:
+        type: string
+      asset_code:
+        type: string
+      asset_issuer:
+        type: string
+      captured_at:
+        type: integer
+      destination_account:
+        type: string
+      detection_latency_seconds:
+        description: DetectionLatencySeconds — captured_at trừ ledger_close_at.
+        type: integer
+      explorer_url:
+        type: string
+      id:
+        type: string
+      ledger_close_at:
+        type: integer
+      memo:
+        type: string
+      op_id:
+        type: string
+      order_id:
+        type: string
+      reject_reason:
+        type: string
+      source_account:
+        type: string
+      tx_hash:
+        type: string
+      verdict:
+        example: matched
+        type: string
+    type: object
+  v1.EvidenceListEnvelope:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/v1.EvidenceDto'
+        type: array
+      status:
+        example: ok
+        type: string
+    type: object
+  v1.FieldComparison:
+    properties:
+      expected:
+        type: string
+      field:
+        example: asset_code
+        type: string
+      match:
+        type: boolean
+      observed:
+        type: string
+    type: object
   v1.OrderDto:
     properties:
       asset_code:
@@ -112,6 +171,32 @@ definitions:
         example: ok
         type: string
     type: object
+  v1.OrderEvidenceData:
+    properties:
+      evidence:
+        items:
+          $ref: '#/definitions/v1.OrderEvidenceDto'
+        type: array
+      order:
+        $ref: '#/definitions/v1.OrderDto'
+    type: object
+  v1.OrderEvidenceDto:
+    properties:
+      comparison:
+        items:
+          $ref: '#/definitions/v1.FieldComparison'
+        type: array
+      evidence:
+        $ref: '#/definitions/v1.EvidenceDto'
+    type: object
+  v1.OrderEvidenceEnvelope:
+    properties:
+      data:
+        $ref: '#/definitions/v1.OrderEvidenceData'
+      status:
+        example: ok
+        type: string
+    type: object
   v1.OrderListEnvelope:
     properties:
       data:
@@ -134,6 +219,37 @@ info:
   title: Shopble API
   version: "1.0"
 paths:
+  /evidence:
+    get:
+      description: 'Nguồn cho bảng kết quả 15 transaction của SOW Deliverable 2: mỗi
+        dòng có tx hash, link Stellar Expert, verdict và detection latency.'
+      parameters:
+      - description: Lọc theo order
+        in: query
+        name: order_id
+        type: string
+      - description: 'Lọc theo verdict: matched | rejected | duplicate'
+        in: query
+        name: verdict
+        type: string
+      - description: Mặc định 50, tối đa 200
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/v1.EvidenceListEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/v1.ErrorResponse'
+      summary: Liệt kê payment evidence thô đọc từ ledger
+      tags:
+      - evidence
   /orders:
     get:
       parameters:
@@ -206,4 +322,28 @@ paths:
       summary: Đọc một order intent kèm trạng thái hiện tại
       tags:
       - orders
+  /orders/{id}/evidence:
+    get:
+      description: 'View cho người review theo SOW: order intent, mọi payment đã quan
+        sát cho order đó, và so sánh từng field.'
+      parameters:
+      - description: Order id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/v1.OrderEvidenceEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/v1.ErrorResponse'
+      summary: Order kèm bằng chứng, dạng expected-versus-observed
+      tags:
+      - evidence
 swagger: "2.0"
