@@ -26,11 +26,18 @@ const (
 	RejectInvalidMemo      RejectReason = "invalid_memo"
 )
 
+// AllRejectReasons — enum đóng, theo thứ tự dùng để báo cáo coverage. Một danh sách
+// duy nhất: nếu vừa có switch vừa có slice thì sớm muộn hai bên lệch nhau.
+var AllRejectReasons = []RejectReason{
+	RejectUnderpayment, RejectWrongAsset, RejectWrongDestination,
+	RejectWrongBuyerWallet, RejectInvalidMemo,
+}
+
 func ValidRejectReason(r RejectReason) bool {
-	switch r {
-	case RejectUnderpayment, RejectWrongAsset, RejectWrongDestination,
-		RejectWrongBuyerWallet, RejectInvalidMemo:
-		return true
+	for _, v := range AllRejectReasons {
+		if v == r {
+			return true
+		}
 	}
 	return false
 }

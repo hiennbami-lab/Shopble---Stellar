@@ -12,6 +12,14 @@ import (
 // một amount làm tròn khác amount kỳ vọng là một underpayment giả.
 const StellarDecimals = 7
 
+// explorerTxBase — Stellar Expert testnet. Scope này chỉ chạy testnet (config từ chối
+// boot trên public network), nên không cần chọn base theo network.
+const explorerTxBase = "https://stellar.expert/explorer/testnet/tx/"
+
+// ExplorerTxUrl — link explorer bấm được cho một transaction hash. SOW bắt mọi
+// transaction trong bảng kết quả phải có link, nên link được sinh ở một chỗ duy nhất.
+func ExplorerTxUrl(hash string) string { return explorerTxBase + hash }
+
 // MaxAmount — trần int64 stroops quy về unit.
 var MaxAmount = decimal.RequireFromString("922337203685.4775807")
 

@@ -56,6 +56,9 @@ CONFIG_PATH=./config.yml ./shopble serve --port 8080 --interval 3
 
 # 6c. Làm frontend, không cần ghi on-chain? Tắt hẳn, và phải nói ra:
 CONFIG_PATH=./config.yml ./shopble serve --port 8080 --no-chain
+
+# 7. Bảng kết quả nộp theo SOW, sinh từ dữ liệu đã lưu
+CONFIG_PATH=./config.yml ./shopble report --out evidence-pack.md
 ```
 
 Thiếu `SHOPBLE_OPERATOR_SECRET` trong khi `contract_id` đã set thì watcher **chết lúc boot**,
@@ -125,6 +128,13 @@ restart trở nên bình thường: `payment_evidence.op_id` là unique, nên đ
 chỉ tạo ra INSERT bị `ON CONFLICT DO NOTHING` nuốt, không đếm trùng payment. Cursor chỉ được
 ghi trong cùng transaction với evidence.
 
+Verdict ghi lên chain nằm NGOÀI transaction của Postgres, và hỏng thì chỉ log — Postgres mới
+là bản ghi chuẩn. Nhưng một lần RPC hỏng mà không ai dọn sẽ thành lỗ vĩnh viễn trong bằng chứng
+on-chain, nên mỗi vòng poll (sau khi đã bắt kịp tip) watcher quét lại các order đã chốt mà
+`on_chain_tx_hash` còn rỗng và ghi lại, tối đa 3 lần mỗi order. Đây cũng là đường để order chốt
+lúc chạy `--no-chain` sau này lên chain được. Order hết 3 lần vẫn hỏng thì hiện trong mục
+Coverage của `shopble report`.
+
 Lần chạy đầu tiên trên một account đã có lịch sử sẽ backfill toàn bộ payment cũ. Chúng đều
 thành `rejected/invalid_memo` (không memo nào khớp order nào) — vô hại, nhưng `detection_latency_seconds`
 của các dòng backfill là khoảng cách tới quá khứ, **không** phải độ trễ phát hiện thật. Chỉ
@@ -154,13 +164,30 @@ State machine được ép ở CẢ HAI phía. Contract từ chối `AwaitingPay
 (lỗi `#3 InvalidTransition`), nên một bug ở backend không thể tự đánh dấu order đủ điều kiện
 fulfilment khi chưa từng quan sát thấy payment nào.
 
+## Evidence pack
+
+```bash
+CONFIG_PATH=./config.yml ./shopble report --out evidence-pack.md
+```
+
+Sinh thẳng ba bảng SOW bắt nộp từ dữ liệu đã lưu: 10 order intent run (7 field + payment
+instruction sinh lại được), transaction của watcher (link Stellar Expert + detection latency),
+và trạng thái on-chain của từng order đã chốt. Chép tay 25 dòng bảng thì sai một dòng cũng
+không ai phát hiện, mà bảng chép tay thì không còn là bằng chứng.
+
+Mục **Coverage** ở đầu báo cáo nói thẳng campaign còn thiếu gì: chưa đủ 10 run, chưa đủ 3 ví
+khác nhau, lý do từ chối nào chưa có case, và order nào đã chốt trong Postgres mà chưa lên
+chain. Cột `Expected` của bảng transaction để trống có chủ ý — ý định của test case không suy
+ra được từ ledger, người chạy campaign tự điền.
+
 ## Trạng thái so với SOW
 
 | Deliverable | Trạng thái |
 |---|---|
-| 1 — Order intent + payment instruction | Backend xong, FE wallet connect xong. Còn: signable transaction ở FE, và 10 run tài liệu hoá |
+| 1 — Order intent + payment instruction | Xong: backend, wallet connect, SEP-0007 + QR, và build-sign-submit qua ví. Còn: 10 run tài liệu hoá (cần trustline + ví có tiền) |
 | 2 — Horizon watcher + matching engine | Xong: watcher, cursor, evidence, matcher 5 lý do, duplicate detection, API đọc evidence. Còn: 15 transaction của test campaign |
-| 3 — Soroban order-status contract | Xong: contract + 10 unit test, deploy testnet, backend ghi verdict qua Soroban RPC |
+| 3 — Soroban order-status contract | Xong: contract + 10 unit test, deploy testnet, backend ghi verdict qua Soroban RPC, tự ghi lại khi RPC hỏng |
+| 4 — Evidence pack | `shopble report` sinh sẵn bảng và mục coverage. Còn: chạy campaign, quay video, nộp |
 
 ## Layout
 
@@ -168,10 +195,11 @@ fulfilment khi chưa từng quan sát thấy payment nào.
 api/ common/ config/ database/ glib/   framework dùng chung
 project/shopble/
   api/v1/         HTTP handlers + DTO
-  cmd/            cobra commands (api, migrate)
+  cmd/            cobra commands (api, watch, serve, migrate, report)
   lib/libstellar/ config Stellar + payment instruction builder + Horizon client
   lib/libsoroban/ ghi verdict lên contract qua Soroban RPC
   services/watcher/ watcher + matching engine
+  services/report/  sinh bảng evidence pack theo SOW
   web/            frontend (Vite + React)
 contracts/order-status/  Soroban contract (Rust)
   models/         GORM models + state machine

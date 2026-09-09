@@ -12,10 +12,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// explorerBase — Stellar Expert testnet. SOW yêu cầu mỗi transaction trong bảng kết quả
-// phải có link explorer bấm được, nên backend trả luôn link thay vì bắt người đọc tự ghép.
-const explorerBase = "https://stellar.expert/explorer/testnet/tx/"
-
 func toEvidenceDto(row *models.PaymentEvidence) EvidenceDto {
 	// Detection latency = lúc backend nhìn thấy payment trừ lúc ledger đóng.
 	// Đây là con số SOW bắt báo cáo cho từng transaction.
@@ -27,7 +23,7 @@ func toEvidenceDto(row *models.PaymentEvidence) EvidenceDto {
 		Id:                      row.Id,
 		OpId:                    row.OpId,
 		TxHash:                  row.TxHash,
-		ExplorerUrl:             explorerBase + row.TxHash,
+		ExplorerUrl:             libstellar.ExplorerTxUrl(row.TxHash),
 		SourceAccount:           row.SourceAccount,
 		DestinationAccount:      row.DestinationAccount,
 		AssetCode:               row.AssetCode,

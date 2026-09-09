@@ -30,6 +30,12 @@ type Watcher struct {
 	interval time.Duration
 	limit    int
 
+	// chainFailed — số lần ghi on-chain hỏng, theo order id. Chỉ trong RAM: mất khi
+	// restart là đúng, restart xong thử lại một lượt nữa còn tốt hơn là nhớ dai một
+	// lỗi có thể đã tự khỏi.
+	// ponytail: đủ cho một watcher một process; nhiều instance thì đếm phải nằm ở DB.
+	chainFailed map[string]int
+
 	ctx    context.Context
 	cancel context.CancelFunc
 }
@@ -59,13 +65,14 @@ func New(stream string, interval time.Duration, chainWrites bool) *Watcher {
 		chain = c
 	}
 	return &Watcher{
-		cfg:      cfg,
-		chain:    chain,
-		stream:   stream,
-		interval: interval,
-		limit:    200,
-		ctx:      ctx,
-		cancel:   cancel,
+		cfg:         cfg,
+		chain:       chain,
+		stream:      stream,
+		interval:    interval,
+		limit:       200,
+		chainFailed: map[string]int{},
+		ctx:         ctx,
+		cancel:      cancel,
 	}
 }
 
@@ -94,6 +101,9 @@ func (w *Watcher) Start() error {
 			continue
 		}
 		if n < w.limit {
+			// Đã bắt kịp tip: dọn nốt các order chốt rồi mà chưa lên chain, rồi mới ngủ.
+			// Lúc còn đang backfill thì bỏ qua, đọc lịch sử xong đã.
+			w.syncChain()
 			w.sleep()
 		}
 	}
@@ -147,9 +157,9 @@ func (w *Watcher) process(db *gorm.DB, p libstellar.HorizonPayment) error {
 
 	// Set khi order vừa được chốt trong txn dưới đây → cần ghi lên chain sau khi commit.
 	var (
-		settled *models.OrderIntent
-		verdict models.Verdict
-		reason  models.RejectReason
+		settled  *models.OrderIntent
+		terminal models.OrderStatus
+		reason   models.RejectReason
 	)
 
 	err = db.Transaction(func(tx *gorm.DB) error {
@@ -208,14 +218,14 @@ func (w *Watcher) process(db *gorm.DB, p libstellar.HorizonPayment) error {
 			}
 			// RowsAffected==0 → payment khác đã chốt order này trước. Không ghi đè.
 			if det.RowsAffected > 0 {
-				terminal := Terminal(v)
+				term := Terminal(v)
 				upd := tx.Model(&models.OrderIntent{}).
 					Where("id = ? AND status = ?", order.Id, models.OrderStatusPaymentDetected).
-					Updates(map[string]any{"status": terminal, "reject_reason": r})
+					Updates(map[string]any{"status": term, "reject_reason": r})
 				if upd.Error != nil {
 					return upd.Error
 				}
-				settled, verdict, reason = order, v, r
+				settled, terminal, reason = order, term, r
 				log.Printf("watcher: order=%s memo=%s verdict=%s reason=%q op=%s", order.Id, p.Memo, v, r, p.Id)
 			}
 		}
@@ -228,19 +238,20 @@ func (w *Watcher) process(db *gorm.DB, p libstellar.HorizonPayment) error {
 	}
 
 	if settled != nil {
-		w.writeChain(settled, verdict, reason)
+		w.writeChain(settled, terminal, reason)
 	}
 	return nil
 }
 
-// writeChain — ghi verdict lên Soroban contract (Deliverable 3).
+// writeChain — ghi verdict lên Soroban contract (Deliverable 3). Trả về true khi
+// trạng thái chốt đã thực sự lên chain.
 //
 // Lỗi ở đây KHÔNG làm hỏng việc xử lý payment: Postgres đã là bản ghi chuẩn và
 // evidence đã commit. Chain là bản sao kiểm chứng được, nên hỏng thì log rồi đi tiếp,
-// không kéo cả watcher dừng lại.
-func (w *Watcher) writeChain(order *models.OrderIntent, verdict models.Verdict, reason models.RejectReason) {
+// không kéo cả watcher dừng lại — syncChain() sẽ thử lại sau.
+func (w *Watcher) writeChain(order *models.OrderIntent, terminal models.OrderStatus, reason models.RejectReason) bool {
 	if w.chain == nil {
-		return
+		return false
 	}
 	ctx, cancel := context.WithTimeout(w.ctx, 3*time.Minute)
 	defer cancel()
@@ -250,15 +261,16 @@ func (w *Watcher) writeChain(order *models.OrderIntent, verdict models.Verdict, 
 	if _, err := w.chain.CreateOrder(ctx, order); err != nil {
 		log.Printf("watcher: chain create_order order=%s: %v", order.Id, err)
 	}
+	// Không dừng nếu bước này hỏng. Khi đây là lần thử lại, chain có thể đã ở
+	// payment_detected từ lượt trước và contract trả InvalidTransition — dừng ở đó thì
+	// order mắc kẹt giữa đường mãi mãi. Bước terminal dưới mới là bước quyết định.
 	if _, err := w.chain.SetStatus(ctx, order.Id, models.OrderStatusPaymentDetected, ""); err != nil {
 		log.Printf("watcher: chain payment_detected order=%s: %v", order.Id, err)
-		return
 	}
-	terminal := Terminal(verdict)
 	hash, err := w.chain.SetStatus(ctx, order.Id, terminal, reason)
 	if err != nil {
 		log.Printf("watcher: chain %s order=%s: %v", terminal, order.Id, err)
-		return
+		return false
 	}
 	if err := database.GetDb().DB.Model(&models.OrderIntent{}).
 		Where("id = ?", order.Id).
@@ -266,4 +278,57 @@ func (w *Watcher) writeChain(order *models.OrderIntent, verdict models.Verdict, 
 		log.Printf("watcher: lưu on_chain_tx_hash order=%s: %v", order.Id, err)
 	}
 	log.Printf("watcher: order=%s on-chain %s tx=%s", order.Id, terminal, hash)
+	return true
+}
+
+const (
+	chainSyncBatch       = 5
+	chainSyncMaxAttempts = 3
+)
+
+// syncChain — order đã chốt trong Postgres nhưng chưa có on_chain_tx_hash thì ghi lại.
+//
+// Không có bước này thì một lần RPC hỏng giữa đường là một lỗ vĩnh viễn trong bằng chứng
+// on-chain: order vẫn validated trong DB, nhưng chain không biết gì, và chỉ log mới ghi
+// lại chuyện đó. Cũng là đường để order chốt lúc chạy --no-chain sau này lên chain được.
+//
+// Bỏ sau chainSyncMaxAttempts lần: nếu contract chặn thật (trạng thái đã lệch) thì thử
+// mãi chỉ là spam RPC mỗi vòng poll. Con số cuối cùng nằm trong `shopble report`.
+func (w *Watcher) syncChain() {
+	if w.chain == nil {
+		return
+	}
+	var rows []models.OrderIntent
+	err := database.GetDb().DB.
+		Where("status IN ? AND coalesce(on_chain_tx_hash, '') = ''",
+			[]models.OrderStatus{models.OrderStatusValidated, models.OrderStatusRejected}).
+		Order("created_at ASC").
+		Limit(chainSyncBatch * 4). // đủ chỗ để nhảy qua các order đã hết lượt thử
+		Find(&rows).Error
+	if err != nil {
+		log.Printf("watcher: chain sync lookup: %v", err)
+		return
+	}
+
+	done := 0
+	for i := range rows {
+		o := &rows[i]
+		if w.chainFailed[o.Id] >= chainSyncMaxAttempts {
+			continue
+		}
+		if done >= chainSyncBatch {
+			return
+		}
+		done++
+		log.Printf("watcher: chain sync order=%s status=%s (lần %d)", o.Id, o.Status, w.chainFailed[o.Id]+1)
+		if w.writeChain(o, o.Status, o.RejectReason) {
+			delete(w.chainFailed, o.Id)
+			continue
+		}
+		w.chainFailed[o.Id]++
+		if w.chainFailed[o.Id] >= chainSyncMaxAttempts {
+			log.Printf("watcher: order=%s NGỪNG thử ghi on-chain sau %d lần — cần xem log contract",
+				o.Id, chainSyncMaxAttempts)
+		}
+	}
 }
