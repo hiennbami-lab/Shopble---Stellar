@@ -16,6 +16,9 @@ import (
 // Endpoint: GET /accounts/{dest}/payments?cursor=&order=asc&limit=&join=transactions
 // `join=transactions` nhúng luôn transaction vào mỗi record để lấy memo — memo nằm ở
 // transaction, KHÔNG nằm ở operation.
+//
+// Nhận cả `payment` lẫn `path_payment_strict_send|receive`: buyer route qua DEX vẫn là
+// buyer trả tiền, bỏ qua thì order treo ở awaiting_payment vĩnh viễn mà không báo gì.
 
 // HorizonPayment — một payment operation quan sát từ ledger, đã phẳng hoá field cần dùng.
 type HorizonPayment struct {
@@ -90,8 +93,11 @@ func (c *StellarConfig) FetchPayments(ctx context.Context, cursor string, limit 
 
 	out := make([]HorizonPayment, 0, len(page.Embedded.Records))
 	for _, r := range page.Embedded.Records {
-		// ponytail: chỉ classic `payment`; thêm path_payment nếu buyer route qua DEX.
-		if r.Type != "payment" {
+		// Endpoint /payments trả cả create_account, account_merge — không phải payment
+		// nào cũng là tiền hàng. Với path payment thì `asset_*`/`amount` đã là thứ
+		// destination NHẬN được (source_asset là thứ buyer bỏ ra, không liên quan),
+		// nên matcher đọc y hệt classic payment.
+		if r.Type != "payment" && !strings.HasPrefix(r.Type, "path_payment") {
 			continue
 		}
 		code := r.AssetCode

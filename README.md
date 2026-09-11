@@ -135,6 +135,11 @@ on-chain, nên mỗi vòng poll (sau khi đã bắt kịp tip) watcher quét l�
 lúc chạy `--no-chain` sau này lên chain được. Order hết 3 lần vẫn hỏng thì hiện trong mục
 Coverage của `shopble report`.
 
+Nhận cả `payment` lẫn `path_payment_strict_send` / `path_payment_strict_receive`. Buyer route
+qua DEX vẫn là buyer trả tiền; với path payment thì `asset`/`amount` Horizon trả về đã là thứ
+destination NHẬN được, nên matcher đọc y hệt classic payment. Bỏ qua loại này là một lỗi câm:
+order treo ở `awaiting_payment` mãi mà không ai thấy gì sai.
+
 Lần chạy đầu tiên trên một account đã có lịch sử sẽ backfill toàn bộ payment cũ. Chúng đều
 thành `rejected/invalid_memo` (không memo nào khớp order nào) — vô hại, nhưng `detection_latency_seconds`
 của các dòng backfill là khoảng cách tới quá khứ, **không** phải độ trễ phát hiện thật. Chỉ
@@ -179,6 +184,27 @@ Mục **Coverage** ở đầu báo cáo nói thẳng campaign còn thiếu gì: 
 khác nhau, lý do từ chối nào chưa có case, và order nào đã chốt trong Postgres mà chưa lên
 chain. Cột `Expected` của bảng transaction để trống có chủ ý — ý định của test case không suy
 ra được từ ledger, người chạy campaign tự điền.
+
+## Giới hạn đã biết
+
+**Order entry trên chain hết hạn sau ~7 ngày.** Soroban tính phí lưu trữ theo thời gian: mỗi
+persistent entry sống tới một ledger rồi bị archive nếu không ai gia hạn. Contract không gọi
+`extend_ttl`, nên mỗi order sống đúng mức tối thiểu network cấp lúc ghi — đọc từ contract đã
+deploy: **120 960 ledger ≈ 7 ngày** kể từ lần `set_status` cuối cùng.
+
+```bash
+stellar contract read --id <contract_id> --durability persistent --network testnet
+# cột cuối là liveUntilLedgerSeq
+```
+
+Quá hạn thì `get_order` / `is_fulfillable` không đọc được entry nữa cho tới khi có người
+restore nó. Điều này KHÔNG làm hỏng bằng chứng đã nộp: link transaction trên Stellar Expert
+là lịch sử ledger, tồn tại vĩnh viễn — chỉ trạng thái đọc-lại-được là hết hạn. Với prototype
+30 ngày thì chấp nhận được; deployment thật phải gọi `extend_ttl` mỗi lần đọc/ghi. Sửa contract
+đồng nghĩa deploy lại và đổi contract id, nên không làm trong Phase 1: contract id hiện tại đã
+nằm trong evidence pack.
+
+Postgres mới là bản ghi chuẩn của order — chain là bản sao kiểm chứng được, không phải nguồn.
 
 ## Trạng thái so với SOW
 
