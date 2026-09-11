@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react'
+import { isSettled } from './api'
 import type { OrderStatus, RejectReason, Verdict } from './api'
 
 export const shortKey = (k: string, head = 6, tail = 6) =>
@@ -93,16 +94,18 @@ const STEPS: OrderStatus[] = ['awaiting_payment', 'payment_detected', 'validated
 // The state machine, drawn. A rejected order fills the last node red instead of green.
 export function StatusTrack({ status }: { status: OrderStatus }) {
   const rejected = status === 'rejected'
+  // A settled order has no step still in progress — validated and rejected are
+  // both endpoints, so nothing should pulse.
+  const settled = isSettled({ status })
   const current = rejected ? 1 : STEPS.indexOf(status)
   return (
     <ol className="track">
       {STEPS.map((step, i) => {
         const last = i === STEPS.length - 1
         const isRejectSlot = rejected && last
-        // A rejected order has settled — nothing on it is still in progress.
         const state = isRejectSlot
           ? 'bad'
-          : i < current || rejected
+          : i < current || settled
             ? 'done'
             : i === current
               ? 'current'

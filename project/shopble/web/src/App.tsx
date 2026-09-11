@@ -1,9 +1,13 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import {
   ApiError,
   createOrder,
+  CHAIN_WAIT_TICKS,
+  explorerTx,
   getOrderEvidence,
+  isSettled,
+  POLL_MS,
   listOrders,
   payUri,
   TESTNET_PASSPHRASE,
@@ -259,10 +263,15 @@ function Order({
   const [phase, setPhase] = useState<PayPhase | null>(null)
   const [payErr, setPayErr] = useState<string | null>(null)
   const [paidTx, setPaidTx] = useState<string | null>(null)
+  const [chainGaveUp, setChainGaveUp] = useState(false)
+  const [recheck, setRecheck] = useState(0)
+  // The interval reads the latest order without re-subscribing on every fetch.
+  const latest = useRef<OrderDto | null>(null)
 
   const load = useCallback(async () => {
     try {
       const res = await getOrderEvidence(id)
+      latest.current = res.order
       setOrder(res.order)
       setEvidence(res.evidence)
       setErr(null)
@@ -272,17 +281,29 @@ function Order({
   }, [id])
 
   useEffect(() => {
+    latest.current = null
+    setChainGaveUp(false)
     load()
-    // Poll while the order can still change. Stops once it settles either way.
+
+    let settledTicks = 0
     const t = setInterval(() => {
-      setOrder((o) => {
-        if (o && (o.status === 'validated' || o.status === 'rejected')) return o
-        load()
-        return o
-      })
-    }, 4000)
+      const o = latest.current
+      if (o && isSettled(o)) {
+        // Settled is not the end: the on-chain verdict is written afterwards.
+        if (o.on_chain_tx_hash) {
+          clearInterval(t)
+          return
+        }
+        if (++settledTicks > CHAIN_WAIT_TICKS) {
+          setChainGaveUp(true)
+          clearInterval(t)
+          return
+        }
+      }
+      load()
+    }, POLL_MS)
     return () => clearInterval(t)
-  }, [load])
+  }, [load, recheck])
 
   const open = () => (
     <>
@@ -389,7 +410,7 @@ function Order({
               Payment submitted.{' '}
               <a
                 className="mono"
-                href={`https://stellar.expert/explorer/testnet/tx/${paidTx}`}
+                href={explorerTx(paidTx)}
                 target="_blank"
                 rel="noreferrer"
               >
@@ -420,19 +441,32 @@ function Order({
           <Row label="Created">
             <span>{new Date(order.created_at * 1000).toLocaleString()}</span>
           </Row>
-          {order.on_chain_tx_hash && (
-            <Row label="Transaction">
+          {order.on_chain_tx_hash ? (
+            <Row label="On-chain verdict">
               <a
                 className="mono"
-                href={`https://stellar.expert/explorer/testnet/tx/${order.on_chain_tx_hash}`}
+                href={explorerTx(order.on_chain_tx_hash)}
                 target="_blank"
                 rel="noreferrer"
               >
                 {shortKey(order.on_chain_tx_hash, 10, 10)}
               </a>
-              <CopyButton value={order.on_chain_tx_hash} label="transaction hash" />
+              <CopyButton value={order.on_chain_tx_hash} label="on-chain verdict hash" />
             </Row>
-          )}
+          ) : isSettled(order) ? (
+            <Row label="On-chain verdict">
+              {chainGaveUp ? (
+                <>
+                  <span className="muted">Not on chain yet</span>
+                  <button className="copy" onClick={() => setRecheck((n) => n + 1)}>
+                    Check again
+                  </button>
+                </>
+              ) : (
+                <span className="live"><span className="live-dot" />Writing to chain</span>
+              )}
+            </Row>
+          ) : null}
         </div>
       </section>
     </>

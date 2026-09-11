@@ -53,3 +53,28 @@ describe('payErrorText', () => {
   it('falls back to the error message when Horizon gave no codes', () =>
     expect(payErrorText(new Error('network down'))).toBe('network down'))
 })
+
+import { CHAIN_WAIT_TICKS, explorerTx, isSettled, POLL_MS } from './api'
+
+const order = (status: string, hash?: string) =>
+  ({ status, on_chain_tx_hash: hash }) as Parameters<typeof isSettled>[0]
+
+describe('isSettled', () => {
+  it('is false while awaiting payment', () => expect(isSettled(order('awaiting_payment'))).toBe(false))
+  it('is false once a payment is detected but not judged', () =>
+    expect(isSettled(order('payment_detected'))).toBe(false))
+  it('is true when validated', () => expect(isSettled(order('validated'))).toBe(true))
+  it('is true when rejected', () => expect(isSettled(order('rejected'))).toBe(true))
+})
+
+describe('explorerTx', () => {
+  it('points at testnet', () => expect(explorerTx('abc')).toBe('https://stellar.expert/explorer/testnet/tx/abc'))
+})
+
+describe('chain-wait budget', () => {
+  // watcher.go: chainSyncMaxAttempts=3, each attempt capped at a 3-minute context
+  // timeout, sweeps ~3s apart. Giving up sooner would report "not on chain" while
+  // the backend is still retrying.
+  it('outlives the watcher retry ceiling of 546s', () =>
+    expect(CHAIN_WAIT_TICKS * POLL_MS).toBeGreaterThanOrEqual(546_000))
+})

@@ -34,6 +34,18 @@ export interface OrderDto {
   updated_at: number
 }
 
+export const POLL_MS = 4000
+
+// How long to keep polling a settled order for its on-chain verdict.
+// The watcher allows chainSyncMaxAttempts = 3 attempts, each capped at a 3-minute
+// context timeout, with sweeps ~3s apart: 3*180s + 2*3s = 546s worst case. The budget
+// has to outlive that or we would give up mid-retry and claim nothing was written.
+export const CHAIN_WAIT_TICKS = 140
+
+// Terminal states: the matcher has judged the payment and will not change its mind.
+export const isSettled = (o: Pick<OrderDto, 'status'>) =>
+  o.status === 'validated' || o.status === 'rejected'
+
 export interface PaymentInstruction {
   destination: string
   asset_code: string
@@ -100,6 +112,11 @@ export const listOrders = (buyerWallet: string, limit = 50) =>
   )
 
 export const TESTNET_PASSPHRASE = 'Test SDF Network ; September 2015'
+
+// EvidenceRecord carries a ready-made `explorer_url`; the order-level hash does not,
+// so build it here rather than inlining the host at each call site.
+export const explorerTx = (hash: string) =>
+  `https://stellar.expert/explorer/testnet/tx/${hash}`
 
 // The backend only returns `instruction.uri` when the order is created. An order
 // reopened from history has every field the SEP-0007 pay URI needs, so rebuild it
