@@ -127,49 +127,35 @@ dialled; a deployment can drop redis altogether and leave them in place.
 
 ### Docker Swarm stack
 
-`docker stack deploy` ignores `build`, `profiles`, `container_name`, `depends_on` and
-`restart` — those belong to compose. Build and push first, then deploy:
+`docker-compose.yml` serves both paths. `docker stack deploy` ignores `build`, `container_name`
+and `restart` — those are for local compose — and reads `deploy` for the swarm-side rules the
+file already encodes: one replica, restart on any exit, `stop-first` updates.
 
 ```bash
-docker build -f docker/app/shopble.dockerfile -t <registry>/shopble:latest .
-docker push <registry>/shopble:latest
+cp .env.example .env         # SHOPBLE_IMAGE, SHOPBLE_CONFIG, DB_CONNECTION, SHOPBLE_OPERATOR_SECRET
+set -a; . ./.env; set +a     # stack deploy interpolates from the shell, not from .env
+
+docker build -f docker/app/shopble.dockerfile -t "$SHOPBLE_IMAGE" .
+docker push "$SHOPBLE_IMAGE"
 docker stack deploy -c docker-compose.yml shopble
 ```
 
-```yaml
-services:
-  api:
-    image: <registry>/shopble:latest
-    command: ["serve", "--host", "0.0.0.0", "--port", "8080"]
-    networks: [db_private_network]
-    environment:
-      CONFIG_PATH: /etc/shopble/config.yml
-      DB_CONNECTION: ${DB_CONNECTION}
-      SHOPBLE_OPERATOR_SECRET: ${SHOPBLE_OPERATOR_SECRET}
-    volumes:
-      - /opt/shopble/config.yml:/etc/shopble/config.yml:ro   # absolute path; swarm does not resolve relative ones
-    ports:
-      - "${API_PORT:-8081}:8080"
-    deploy:
-      replicas: 1
-      restart_policy: { condition: any, delay: 5s }
-      update_config: { order: stop-first }                   # start-first would briefly run two watchers
-```
-
-`docker stack deploy` interpolates from the **shell** environment, not from a `.env` file —
-`set -a; . ./.env; set +a` first.
+`SHOPBLE_IMAGE` must be a registry path on swarm — stack deploy pulls, it never builds.
+`SHOPBLE_CONFIG` must be an **absolute** path on the node: swarm does not resolve relative bind
+mounts. Locally, `docker compose up -d --build` works with the defaults as they ship.
 
 Reusing an existing Postgres on a shared network: point `DB_CONNECTION` at the service name and
 the internal port (`postgres://user:pass@<service>:5432/shopble?sslmode=disable`), not at any
 published host port.
 
-Migration has no one-shot equivalent in swarm; run it as a plain container on the same network:
+Migration has no one-shot equivalent in swarm; run it as a plain container on the same network
+before the first deploy:
 
 ```bash
 docker run --rm --network db_private_network \
-  -e CONFIG_PATH=/etc/shopble/config.yml -e DB_CONNECTION="$DB_CONNECTION" \
-  -v /opt/shopble/config.yml:/etc/shopble/config.yml:ro \
-  <registry>/shopble:latest migrate
+  -e DB_CONNECTION="$DB_CONNECTION" \
+  -v "$SHOPBLE_CONFIG":/etc/shopble/config.yml:ro \
+  "$SHOPBLE_IMAGE" migrate
 ```
 
 After deploying, `docker service logs -f shopble_api` should show

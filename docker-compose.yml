@@ -1,27 +1,67 @@
 name: shopble
 
+# Postgres is not defined here — this stack reuses an existing instance reachable on the
+# shared db_private_network. Redis is not used by the project at all: apiPrerun and
+# watchPrerun initialise the database and the Stellar config, nothing else. The CACHE_DB /
+# LOCK_DB blocks in config.yml are parsed and never dialled.
+#
+# Local compose:
+#   docker compose up -d --build
+#
+# Swarm stack (build and push first; stack deploy never builds):
+#   docker build -f docker/app/shopble.dockerfile -t $SHOPBLE_IMAGE .
+#   docker push $SHOPBLE_IMAGE
+#   set -a; . ./.env; set +a          # stack deploy reads the shell, not .env
+#   docker stack deploy -c docker-compose.yml shopble
+#
+# Schema migration is a one-off and has no equivalent inside a stack — run it as a plain
+# container on the same network before the first deploy:
+#   docker run --rm --network db_private_network \
+#     -e DB_CONNECTION="$DB_CONNECTION" \
+#     -v "$SHOPBLE_CONFIG":/etc/shopble/config.yml:ro \
+#     "$SHOPBLE_IMAGE" migrate
+
 networks:
   db_private_network:
     external: true
 
 services:
+  # HTTP API and the payment watcher in ONE process, via `serve`.
+  #
+  # The image's default CMD is `api http`, which starts the API with NO watcher — the
+  # ledger goes unread and no payment is ever detected. The command override below is
+  # what makes this a complete deployment, not an optional tweak.
   api:
-    image: 127.0.0.1:5000/shopble:latest
-    command: ["serve", "--host", "0.0.0.0", "--port", "8080"]
+    build:
+      context: .
+      dockerfile: docker/app/shopble.dockerfile
+    image: ${SHOPBLE_IMAGE:-shopble:local}
+    command: ["serve", "--host", "0.0.0.0", "--port", "8080", "--interval", "3"]
+    container_name: shopble_api
+    restart: unless-stopped
     networks:
       - db_private_network
     environment:
-      CONFIG_PATH: /etc/shopble/config.yml
-      DB_CONNECTION: ${DB_CONNECTION}
-      SHOPBLE_OPERATOR_SECRET: ${SHOPBLE_OPERATOR_SECRET}
+      # Credentials stay out of the config file: viper AutomaticEnv overrides the
+      # top-level DB_CONNECTION. Point it at the service name and the INTERNAL port
+      # (postgres://user:pass@<service>:5432/shopble?sslmode=disable).
+      DB_CONNECTION: ${DB_CONNECTION:-}
+      # Operator key that signs set_status. Never written to a file or baked into a layer.
+      # Missing while contract_id is set = the watcher dies at boot, on purpose.
+      SHOPBLE_OPERATOR_SECRET: ${SHOPBLE_OPERATOR_SECRET:-}
     volumes:
-      - /opt/shopble/config.yml:/etc/shopble/config.yml:ro
+      # Swarm does not resolve relative bind paths — export an absolute SHOPBLE_CONFIG
+      # (e.g. /opt/shopble/config.yml) when deploying as a stack.
+      - ${SHOPBLE_CONFIG:-./config.yml}:/etc/shopble/config.yml:ro
     ports:
       - "${API_PORT:-8081}:8080"
     deploy:
+      # Exactly one watcher, always. The Horizon cursor is per-stream and the chain-write
+      # retry counter is an in-memory map, so a second replica double-processes the ledger.
       replicas: 1
       restart_policy:
         condition: any
         delay: 5s
       update_config:
+        # start-first would briefly run two watchers against the same cursor.
         order: stop-first

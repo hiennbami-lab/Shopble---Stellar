@@ -31,3 +31,5 @@ node_modules
 contracts/target/
 test_snapshots/
 .stellar/
+
+.env
