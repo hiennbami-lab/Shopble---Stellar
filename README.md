@@ -111,9 +111,10 @@ single service unit. `docker/app/shopble.dockerfile` builds a static binary onto
 
 Three things decide whether a deployment actually works:
 
-- **Override the image command.** The dockerfile's `CMD` is `api http`, which starts the API
-  with **no watcher** — no payment detection at all. A deployment must run
-  `["serve", "--host", "0.0.0.0", "--port", "8080"]`.
+- **Run `serve`, not `api http`.** The image defaults to `serve`, which is the API and the
+  watcher in one process. Overriding the command with `api http` starts the API with **no
+  watcher** — nothing reads the ledger, no payment is ever detected, and `/health` still
+  answers `healthy`. Only split the two when running more than one API replica.
 - **Exactly one watcher instance.** The Horizon cursor is per-stream and the chain-write retry
   counter is an in-memory map. Two replicas double-process the ledger. Scale the API by running
   `api http` separately if that is ever needed; the watcher stays at one.

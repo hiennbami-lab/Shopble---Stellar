@@ -1,8 +1,9 @@
-# Secrets — build context đi thẳng vào layer, không bao giờ để lọt vào đây.
+# Secrets — the build context goes straight into a layer, never let these in.
 config.yml
+.env
 *.seed
 
-# Artifact build trên host: binary linux/amd64 được build lại trong image.
+# Host build artifacts: the linux binary is rebuilt inside the image.
 build
 build.sh
 deployment
@@ -11,10 +12,19 @@ main
 shopble
 model
 
+# Not part of the Go build, and together the largest thing in this repo. The backend
+# does not embed the frontend (no go:embed anywhere), and the contract is Rust.
+project/shopble/web/node_modules
+project/shopble/web/dist
+contracts/target
+test_snapshots
+.stellar
+
 .git
 .gitignore
 .claude
 .codex
+.agents
 .vscode
 
 *.md
