@@ -45,6 +45,7 @@ services:
     networks:
       - db_private_network
       - shopble_internal
+      - public_network
     environment:
       # Credentials stay out of the config file: viper AutomaticEnv overrides the
       # top-level DB_CONNECTION. Point it at the service name and the INTERNAL port
@@ -86,6 +87,7 @@ services:
     restart: unless-stopped
     networks:
       - shopble_internal
+      - public_network
     depends_on:
       - api
     deploy:
