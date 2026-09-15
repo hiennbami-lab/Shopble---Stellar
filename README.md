@@ -104,12 +104,26 @@ npm test
 Freighter only injects on **https** or `localhost`. A deployment served over plain http will
 look fine and then fail to connect a wallet, so put TLS in front of it.
 
+For a deployment the frontend ships as its own image (`docker/web/shopble-web.dockerfile`):
+node builds the bundle, nginx serves it and proxies `/api` to the API container. See Deploy.
+
 ## Deploy
 
 `shopble serve` runs the HTTP API and the watcher in **one process**, so a deployment is a
 single service unit. `docker/app/shopble.dockerfile` builds a static binary onto distroless.
 
-Three things decide whether a deployment actually works:
+Two images, two services. `api` runs the backend; `web` is nginx serving the built frontend
+and proxying `/api` and `/health` to `api` on a network private to this stack. That makes the
+whole app **same-origin**, so the browser never issues a cross-origin request and the API's CORS
+middleware stops mattering. Publish only `web` to the internet and put TLS in front of it.
+
+Vite inlines env vars at **build** time, so `VITE_API_BASE` and `VITE_HORIZON` are build args on
+the web image — repointing the bundle means rebuilding it. Leave `VITE_API_BASE` **empty** so the
+app calls `/api` on its own origin. Leaving it *unset* is not the same thing: `src/api.ts` then
+falls back to `http://localhost:8080`, which silently points a deployed bundle at the viewer's
+own machine.
+
+Three things decide whether the backend actually works:
 
 - **Run `serve`, not `api http`.** The image defaults to `serve`, which is the API and the
   watcher in one process. Overriding the command with `api http` starts the API with **no
@@ -137,11 +151,14 @@ cp .env.example .env         # SHOPBLE_IMAGE, SHOPBLE_CONFIG, DB_CONNECTION, SHO
 set -a; . ./.env; set +a     # stack deploy interpolates from the shell, not from .env
 
 docker build -f docker/app/shopble.dockerfile -t "$SHOPBLE_IMAGE" .
-docker push "$SHOPBLE_IMAGE"
+docker build -f docker/web/shopble-web.dockerfile -t "$SHOPBLE_WEB_IMAGE" \
+  --build-arg VITE_API_BASE="$VITE_API_BASE" --build-arg VITE_HORIZON="$VITE_HORIZON" .
+docker push "$SHOPBLE_IMAGE" && docker push "$SHOPBLE_WEB_IMAGE"
 docker stack deploy -c docker-compose.yml shopble
 ```
 
-`SHOPBLE_IMAGE` must be a registry path on swarm — stack deploy pulls, it never builds.
+`SHOPBLE_IMAGE` and `SHOPBLE_WEB_IMAGE` must be registry paths on swarm — stack deploy pulls,
+it never builds.
 `SHOPBLE_CONFIG` must be an **absolute** path on the node: swarm does not resolve relative bind
 mounts. Locally, `docker compose up -d --build` works with the defaults as they ship.
 
@@ -328,5 +345,6 @@ project/shopble/
   services/report/  generates the SOW evidence-pack tables
   web/              frontend (Vite + React)
 contracts/order-status/   Soroban contract (Rust)
-docker/app/               distroless image for the service
+docker/app/               distroless image for the backend service
+docker/web/               node build + nginx image for the frontend
 ```

@@ -24,6 +24,9 @@ name: shopble
 networks:
   db_private_network:
     external: true
+  # Private to this stack. The web container reaches the API over this one, so `api` as a
+  # DNS name cannot collide with another stack's service on the shared database network.
+  shopble_internal:
 
 services:
   # HTTP API and the payment watcher in ONE process, via `serve`.
@@ -41,6 +44,7 @@ services:
     restart: unless-stopped
     networks:
       - db_private_network
+      - shopble_internal
     environment:
       # Credentials stay out of the config file: viper AutomaticEnv overrides the
       # top-level DB_CONNECTION. Point it at the service name and the INTERNAL port
@@ -65,3 +69,31 @@ services:
       update_config:
         # start-first would briefly run two watchers against the same cursor.
         order: stop-first
+
+  # Static frontend on nginx, which also proxies /api to the API container. That makes the
+  # whole app same-origin: the browser never issues a cross-origin request, so the API's
+  # CORS middleware stops mattering (it is dropped entirely at RELEASE_MODE=prod).
+  #
+  # Vite inlines env vars at build time, so VITE_API_BASE / VITE_HORIZON are build args,
+  # not runtime environment. Repointing the bundle means rebuilding the image.
+  web:
+    build:
+      context: .
+      dockerfile: docker/web/shopble-web.dockerfile
+      args:
+        VITE_API_BASE: ${VITE_API_BASE-}
+        VITE_HORIZON: ${VITE_HORIZON:-https://horizon-testnet.stellar.org}
+    image: ${SHOPBLE_WEB_IMAGE:-shopble-web:local}
+    container_name: shopble_web
+    restart: unless-stopped
+    networks:
+      - shopble_internal
+    depends_on:
+      - api
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 5s
