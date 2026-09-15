@@ -112,16 +112,21 @@ node builds the bundle, nginx serves it and proxies `/api` to the API container.
 `shopble serve` runs the HTTP API and the watcher in **one process**, so a deployment is a
 single service unit. `docker/app/shopble.dockerfile` builds a static binary onto distroless.
 
-Two images, two services. `api` runs the backend; `web` is nginx serving the built frontend
-and proxying `/api` and `/health` to `api` on a network private to this stack. That makes the
-whole app **same-origin**, so the browser never issues a cross-origin request and the API's CORS
-middleware stops mattering. Publish only `web` to the internet and put TLS in front of it.
+Two images, two services, both published on the host: `api` on `${API_PORT}` (8081) and `web`
+on `${WEB_PORT}` (3000). A TLS-terminating nginx in front routes one hostname to both — `/api`
+and `/health` to 8081, everything else to 3000 — which is what makes the app **same-origin** in
+the browser and why the API's CORS middleware never comes into play.
+
+The `web` container also proxies `/api` to `api` internally, so hitting it directly on port 3000
+works on its own before that front nginx exists. Once the front nginx routes `/api` itself, the
+internal proxy is redundant — harmless, and one `location` block in `docker/web/nginx.conf` to
+delete if you want the web container to be purely static.
 
 Vite inlines env vars at **build** time, so `VITE_API_BASE` and `VITE_HORIZON` are build args on
-the web image — repointing the bundle means rebuilding it. Leave `VITE_API_BASE` **empty** so the
-app calls `/api` on its own origin. Leaving it *unset* is not the same thing: `src/api.ts` then
-falls back to `http://localhost:8080`, which silently points a deployed bundle at the viewer's
-own machine.
+the web image — repointing the bundle means rebuilding it. Leave `VITE_API_BASE` **empty**: the
+app then calls `/api` on whatever origin served it, which is correct both behind the front nginx
+and when hitting port 3000 directly. Setting it to an absolute URL brings CORS back and pins the
+bundle to one hostname.
 
 Three things decide whether the backend actually works:
 
