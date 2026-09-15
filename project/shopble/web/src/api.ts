@@ -2,7 +2,12 @@
 //   success: { status: "ok", data: ... }
 //   error:   { status: "error", data: { error_code, message } }
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8080'
+// In a deployment nginx serves the app and proxies /api on the same origin, so a
+// relative base is the right production default. Falling back to localhost outside
+// dev would ship a bundle pointing at the viewer's own machine, failing only in the
+// browser with nothing in the build log.
+const API_BASE =
+  import.meta.env.VITE_API_BASE ?? (import.meta.env.DEV ? 'http://localhost:8080' : '')
 
 export type OrderStatus =
   | 'awaiting_payment'
