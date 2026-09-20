@@ -31,3 +31,5 @@ test_snapshots
 docker-compose.yml
 *.session.sql
 *.bak
+
+out/*

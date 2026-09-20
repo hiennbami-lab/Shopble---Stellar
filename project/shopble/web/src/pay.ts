@@ -4,7 +4,7 @@
 import { StellarWalletsKit } from '@creit.tech/stellar-wallets-kit'
 import { TESTNET_PASSPHRASE } from './api'
 
-const HORIZON_URL = import.meta.env.VITE_HORIZON ?? 'https://horizon-testnet.stellar.org'
+export const HORIZON_URL = import.meta.env.VITE_HORIZON ?? 'https://horizon-testnet.stellar.org'
 
 export interface PayFields {
   destination: string

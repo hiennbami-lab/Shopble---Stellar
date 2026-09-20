@@ -130,8 +130,19 @@ a { color: inherit; }
   background: var(--surface); border: 1px solid var(--line-strong);
   border-radius: 9px; color: var(--ink); font-size: 15px;
 }
+.field-input::placeholder { color: #98a2b3; }
 .field-input:focus { outline: none; border-color: var(--ink); box-shadow: 0 0 0 3px rgba(16, 24, 40, 0.08); }
-.field-hint { margin-top: 6px; font-size: 12.5px; color: var(--muted); }
+.field-hint { display: block; margin-top: 6px; font-size: 12.5px; color: var(--muted); }
+.hint-row { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; }
+.hint-row .mono { font-size: 12.5px; color: var(--ink-2); }
+.linkish {
+  margin-left: 8px; padding: 0; background: none; border: 0;
+  font: inherit; color: var(--ink); text-decoration: underline; cursor: pointer;
+}
+.field-warn {
+  display: block; margin-top: 8px; max-width: 62ch;
+  font-size: 12.5px; color: var(--wait-fg);
+}
 .field-affix { position: relative; }
 .field-affix .field-input { padding-right: 66px; }
 .field-unit {
@@ -270,6 +281,10 @@ a { color: inherit; }
 .specimen {
   padding: 24px; background: var(--surface);
   border: 1px solid var(--line); border-radius: 14px;
+}
+.specimen-cap {
+  margin-bottom: 16px; padding-bottom: 14px; border-bottom: 1px solid var(--line);
+  font-size: 12px; color: var(--muted);
 }
 .specimen .amount { font-size: 30px; }
 .specimen .memo { margin-top: 18px; }

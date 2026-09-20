@@ -17,7 +17,8 @@ import {
 } from './api'
 import { connectWallet, disconnectWallet } from './wallet'
 import { payErrorText, payWithWallet, type PayPhase } from './pay'
-import { validateAmount, validateProductRef } from './validation'
+import { exceedsBalance, validateAmount, validateProductRef } from './validation'
+import { assetBalance, type Balance } from './balance'
 import {
   CopyButton,
   FIELD_LABEL,
@@ -99,6 +100,7 @@ export default function App() {
           </div>
           </div>
           <aside className="specimen" aria-hidden="true">
+            <p className="specimen-cap">Example slip — not a live order</p>
             <p className="amount-label">Amount to pay</p>
             <p className="amount">
               25.5000000<span className="amount-unit">USDC</span>
@@ -176,6 +178,38 @@ function NewOrder({
   const [amount, setAmount] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  const [asset, setAsset] = useState<{ code: string; issuer: string } | null>(null)
+  const [balance, setBalance] = useState<Balance | null>(null)
+
+  // Which asset an order is denominated in is backend config, and the API only
+  // reveals it on an order. The newest order is that answer straight from the
+  // source, so it cannot drift the way a duplicated issuer in the frontend would.
+  // A wallet with no orders yet shows no balance, which is the honest state.
+  useEffect(() => {
+    let live = true
+    listOrders(wallet, 1)
+      .then((o) => {
+        if (live && o[0]) setAsset({ code: o[0].asset_code, issuer: o[0].asset_issuer })
+      })
+      .catch(() => {})
+    return () => { live = false }
+  }, [wallet])
+
+  useEffect(() => {
+    if (!asset) return
+    let live = true
+    assetBalance(wallet, asset.code, asset.issuer)
+      .then((b) => { if (live) setBalance(b) })
+      // Horizon being unreachable must not break order creation: the balance is a
+      // convenience, and op_underfunded still catches a short wallet at payment.
+      .catch(() => {})
+    return () => { live = false }
+  }, [wallet, asset])
+
+  const short =
+    balance?.kind === 'ok' &&
+    validateAmount(amount) === null &&
+    exceedsBalance(amount, balance.amount)
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -232,9 +266,33 @@ function NewOrder({
             placeholder="25.5"
             inputMode="decimal"
           />
-          <span className="field-unit">USDC</span>
+          <span className="field-unit">{asset?.code ?? 'USDC'}</span>
         </span>
-        <span className="field-hint">Up to 7 decimal places.</span>
+        <span className="field-hint hint-row">
+          <span>Up to 7 decimal places.</span>
+          {balance?.kind === 'ok' && (
+            <span>
+              Balance <span className="mono">{balance.amount}</span>
+              <button
+                type="button"
+                className="linkish"
+                onClick={() => setAmount(balance.amount)}
+              >
+                Max
+              </button>
+            </span>
+          )}
+          {balance?.kind === 'no_trustline' && (
+            <span>No {asset?.code ?? 'USDC'} trustline on this wallet.</span>
+          )}
+          {balance?.kind === 'no_account' && <span>This wallet is not funded on testnet.</span>}
+        </span>
+        {short && (
+          <span className="field-warn">
+            More than this wallet holds. The order is still valid — fund the wallet
+            before paying, or the payment will fail as underfunded.
+          </span>
+        )}
       </label>
 
       <button className="btn" type="submit" disabled={busy}>

@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { isStellarPubKey, validateAmount, validateProductRef } from './validation'
+import {
+  exceedsBalance,
+  isStellarPubKey,
+  toAmount,
+  stroops,
+  validateAmount,
+  validateProductRef,
+} from './validation'
 
 const G = 'G' + 'A'.repeat(55) // 56 chars
 
@@ -77,4 +84,39 @@ describe('chain-wait budget', () => {
   // the backend is still retrying.
   it('outlives the watcher retry ceiling of 546s', () =>
     expect(CHAIN_WAIT_TICKS * POLL_MS).toBeGreaterThanOrEqual(546_000))
+})
+
+describe('exceedsBalance', () => {
+  it('is false when the amount fits', () => {
+    expect(exceedsBalance('12', '12.0000000')).toBe(false)
+    expect(exceedsBalance('11.9999999', '12.0000000')).toBe(false)
+  })
+
+  it('is true one stroop over', () => {
+    expect(exceedsBalance('12.0000001', '12.0000000')).toBe(true)
+  })
+
+  it('compares past double precision', () => {
+    // Both round to the same float; only integer stroops can tell them apart.
+    expect(exceedsBalance('922337203685.4775807', '922337203685.4775806')).toBe(true)
+    expect(exceedsBalance('922337203685.4775806', '922337203685.4775807')).toBe(false)
+  })
+
+  it('treats a missing fraction as zeros, not as stroops', () => {
+    expect(exceedsBalance('2', '1.5')).toBe(true)
+    expect(exceedsBalance('1', '1.5')).toBe(false)
+  })
+})
+
+describe('stroops / toAmount', () => {
+  it('round-trips a Horizon amount', () => {
+    for (const a of ['12.0000000', '0.0000001', '922337203685.4775807', '1.5000000'])
+      expect(toAmount(stroops(a))).toBe(a)
+  })
+
+  it('pads a sub-unit result to a valid amount', () =>
+    expect(toAmount(1n)).toBe('0.0000001'))
+
+  it('subtracts liabilities exactly', () =>
+    expect(toAmount(stroops('12.0000000') - stroops('0.0000001'))).toBe('11.9999999'))
 })
